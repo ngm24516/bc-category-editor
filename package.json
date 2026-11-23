@@ -1,0 +1,27 @@
+{
+  "name": "bc-category-editor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Better Containers category editor: static editor page plus a Node API with Discord sign-in and Postgres storage.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "migrate": "node server/migrate.js",
+    "lint": "eslint .",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "compression": "^1.8.2",
+    "express": "^5.3.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0"
+  }
+}

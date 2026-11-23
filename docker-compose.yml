@@ -1,0 +1,30 @@
+# Local development: `docker compose up` then open http://localhost:3000
+# Put your Discord app's Client ID and Secret in a .env file next to this one (see .env.example).
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - ./db/init-local.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      retries: 20
+
+  app:
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["3000:3000"]
+    environment:
+      PUBLIC_URL: http://localhost:3000
+      DATABASE_URL: postgres://bc_app:bc_app@db:5432/bceditor
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
+      ADMIN_DISCORD_IDS: ${ADMIN_DISCORD_IDS:-}
+
+volumes:
+  pgdata:
