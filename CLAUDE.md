@@ -14,14 +14,18 @@ sign-in and Postgres, deployed as one container to Azure Container Apps. See REA
   Container Apps secrets and are passed to Bicep via environment variables.
 - **Keep the API boring:** JSON in, JSON out, validate input (see `cleanBody` in server/sets.js), return
   `{ error, message }` with a proper status code, never a stack trace.
-- **Keep the page working without the API.** Opened as a plain file or on a static host, it must behave as a
-  browser-only editor (the account area stays hidden).
+- **The item catalog is shared and read-only for users.** Base game + imported Workshop mods live in `mods`,
+  `mod_versions`, `catalog_items`, `icon_sheets`. A version is never changed after it's written (the API caches
+  it forever); an update is a new version. Setups choose mods in `set_mods` (user data, RLS).
+- **Importer code (`importer/pzcatalog`) only reads files.** Never execute, `require` or `eval` anything from a mod.
+- Signed out, the editor still works with edits kept in the browser; it needs the API for the item list.
 - `.ini` output must stay byte-compatible with Better Containers' own writer (`writeIni` in web/index.html).
 
 ## Before opening a pull request
 
 ```
 npm run lint
+python3 -m unittest discover -s importer/tests
 TEST_DATABASE_URL=postgres://bc_app:bc_app@localhost:5432/bceditor_test npm test
 ```
 

@@ -1,4 +1,5 @@
 import { createApp } from "./app.js";
+import { seedBaseGame } from "./catalog.js";
 import { loadConfig } from "./config.js";
 import { createPool } from "./db.js";
 import { migrate } from "./migrate.js";
@@ -7,6 +8,7 @@ const config = loadConfig();
 if (config.migrateOnStart) await migrate(config.databaseUrl);
 
 const pool = createPool(config.databaseUrl);
+await seedBaseGame(pool);
 const app = createApp({ pool, config });
 
 // Expired sessions are cleaned up hourly.

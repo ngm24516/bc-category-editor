@@ -12,6 +12,7 @@ COPY package.json ./
 COPY server ./server
 COPY db ./db
 COPY web ./web
+COPY seed ./seed
 # Run as the unprivileged "node" user, never root.
 USER node
 EXPOSE 3000
