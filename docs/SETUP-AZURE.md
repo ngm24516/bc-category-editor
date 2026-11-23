@@ -72,7 +72,7 @@ az role assignment create --assignee $appId --role Contributor --scope $rg | Out
 
 foreach ($envName in "staging", "production") {
   @{ name = "github-$envName"; issuer = "https://token.actions.githubusercontent.com";
-     subject = "repo:ngm24516/bc-category-editor:environment:$envName";
+     subject = "repo:ngm24516@257171202/bc-category-editor@1468104877:environment:$envName";
      audiences = @("api://AzureADTokenExchange") } | ConvertTo-Json | Out-File -Encoding ascii cred.json
   az ad app federated-credential create --id $appId --parameters cred.json | Out-Null
 }
@@ -82,6 +82,10 @@ Remove-Item cred.json
 "AZURE_TENANT_ID       = $tenant"
 "AZURE_SUBSCRIPTION_ID = $sub"
 ```
+
+The subject includes the account and repository **numbers** (`ngm24516@257171202`, `bc-category-editor@1468104877`):
+GitHub now puts those in its OIDC tokens so a renamed or re-created repo can't inherit the trust. If a deploy fails with
+`AADSTS700213 No matching federated identity record`, the job log's "subject claim" line shows the exact value to use.
 
 (Contributor on the resource group is broad but simple. Narrowing it to the two container apps is a good
 least-privilege exercise later.)
@@ -120,5 +124,8 @@ Open the run, click **Review deployments**, approve, and production goes live at
 
 ## 9. Retire the Static Web App (after production works)
 
-In a follow-up pull request, delete `.github/workflows/azure-static-web-apps-*.yml`, then delete the
-Static Web App resource in the portal.
+Its workflow was removed from the repo. Delete the leftovers once production is live:
+
+1. Portal → **rg-bceditor** → the Static Web App (`bc-editor`) → **Delete**.
+2. GitHub → **Settings** → **Secrets and variables** → **Actions** → delete
+   `AZURE_STATIC_WEB_APPS_API_TOKEN_LEMON_MOSS_0954F4110`.
