@@ -6,6 +6,8 @@ import compression from "compression";
 import express from "express";
 import { avatarUrl, createAuth } from "./auth.js";
 import { createCatalogRouter } from "./catalog.js";
+import { createImportsRouter } from "./imports.js";
+import { createSteam } from "./steam.js";
 import { createSetsRouter } from "./sets.js";
 
 const WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "web");
@@ -52,6 +54,8 @@ export function createApp({ pool, config, fetchImpl }) {
   });
   app.use("/api/catalog", createCatalogRouter({ pool }));
   app.use("/api/sets", createSetsRouter({ pool, requireUser: auth.requireUser }));
+  const steam = createSteam({ apiBase: config.steamApiBase, ...(fetchImpl ? { fetchImpl } : {}) });
+  app.use("/api", createImportsRouter({ pool, requireUser: auth.requireUser, steam }));
   app.use("/api", (_req, res) => res.status(404).json({ error: "not_found" }));
 
   app.use(express.static(WEB_DIR, {

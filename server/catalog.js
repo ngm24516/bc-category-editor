@@ -17,8 +17,10 @@ const SEED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "
 
 // Newest version of each mod, with the fields the editor's mod list needs.
 const MOD_LIST_SQL = `
-  SELECT m.id, m.kind, m.workshop_id, m.name, v.id AS version_id, v.label, v.item_count, v.created_at AS updated_at
+  SELECT m.id, m.kind, m.workshop_id, m.name, v.id AS version_id, v.label, v.item_count, v.created_at AS updated_at,
+         coalesce(u.display_name, u.username) AS added_by
     FROM mods m
+    LEFT JOIN users u ON u.id = m.created_by
     LEFT JOIN LATERAL (
       SELECT id, label, item_count, created_at FROM mod_versions WHERE mod_id = m.id ORDER BY created_at DESC LIMIT 1
     ) v ON true`;
@@ -26,6 +28,7 @@ const MOD_LIST_SQL = `
 export const modJson = r => ({
   id: r.id, kind: r.kind, workshopId: r.workshop_id, name: r.name,
   versionId: r.version_id, label: r.label, itemCount: r.item_count, updatedAt: r.updated_at,
+  addedBy: r.added_by || null,
 });
 
 export function createCatalogRouter({ pool }) {

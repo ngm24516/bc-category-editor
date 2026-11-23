@@ -188,6 +188,7 @@
     @apply flex max-h-[90%] w-[min(560px,100%)] flex-col gap-3 overflow-auto rounded-2xl p-6 shadow-xl ring-1 ring-black/5;
     background: var(--panel);
   }
+  .modal .box > * { @apply shrink-0; }  /* the dialog scrolls; its lists never get squashed */
   .modal h2 { @apply m-0 text-lg font-bold tracking-tight; }
   .modal ol { @apply m-0 flex list-decimal flex-col gap-1.5 pl-5; }
   .modal ol li::marker { color: var(--muted); }
@@ -219,4 +220,21 @@
   aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
   .thead, .row { grid-template-columns: 26px 32px minmax(130px, 2fr) minmax(130px, 1.4fr) 54px; }
   .col-mod, .col-def { display: none; }
+}
+
+@layer components {
+  /* Importing from the Steam Workshop */
+  .import { @apply flex flex-col gap-2 border-t pt-3; border-color: var(--line); }
+  .import .flabel { @apply mb-0; }
+  .importrow { @apply flex gap-2; }
+  .importrow input { @apply flex-1; }
+  .import .help { @apply m-0; }
+  .import .help a { @apply font-semibold; }
+  .modlist li.coll { @apply font-semibold; background: var(--bg); }
+  .badge { @apply inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset; }
+  .badge.queued { @apply bg-gray-50 text-gray-600 ring-gray-500/20 dark:bg-gray-400/10 dark:text-gray-300; }
+  .badge.running { @apply bg-indigo-50 text-indigo-700 ring-indigo-700/20 dark:bg-indigo-400/10 dark:text-indigo-300; }
+  .badge.ready { @apply bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-300; }
+  .badge.failed { @apply bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-400/10 dark:text-red-300; }
+  .badge.skipped { @apply bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-300; }
 }

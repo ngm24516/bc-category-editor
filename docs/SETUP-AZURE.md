@@ -129,3 +129,35 @@ Its workflow was removed from the repo. Delete the leftovers once production is 
 1. Portal → **rg-bceditor** → the Static Web App (`bc-editor`) → **Delete**.
 2. GitHub → **Settings** → **Secrets and variables** → **Actions** → delete
    `AZURE_STATIC_WEB_APPS_API_TOKEN_LEMON_MOSS_0954F4110`.
+
+## 10. Turn on mod importing (once, after the importer pull request is merged)
+
+The importer runs as two Azure Container Apps Jobs per environment: `<app>-import` (starts when imports are
+queued) and `<app>-updates` (every hour, queues new versions of mods that changed on Steam).
+
+1. After the merge, the **Deploy** workflow also builds `bc-category-editor-importer`. Make that package public
+   the same way as step 2: GitHub → your profile → **Packages** → `bc-category-editor-importer` →
+   **Package settings** → **Change visibility** → **Public**.
+2. Create the jobs by running step 4's deployment again, from an up-to-date `main`, entering each secret
+   at its own prompt (paste one line at a time):
+
+   ```powershell
+   git checkout main
+   git pull
+   ```
+   ```powershell
+   $env:PG_ADMIN_PASSWORD = Read-Host "Postgres admin password (the existing one)"
+   ```
+   ```powershell
+   $env:DISCORD_CLIENT_SECRET = Read-Host "Discord Client Secret"
+   ```
+   ```powershell
+   az deployment group create -g rg-bceditor -f infra/main.bicep -p infra/main.bicepparam --query properties.outputs
+   ```
+
+   Use the **existing** Postgres password: entering a new one changes it.
+3. Check: portal → **rg-bceditor** shows `bceditor-staging-import`, `bceditor-staging-updates`,
+   `bceditor-prod-import` and `bceditor-prod-updates`. Import a mod on staging; the job's **Execution history**
+   shows a run start within about a minute, and the mod turns **Ready** in the Mods dialog a few minutes later.
+
+From then on every Deploy updates the jobs' image along with the apps.

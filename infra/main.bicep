@@ -2,6 +2,9 @@
 //   Log Analytics  -> container logs
 //   Container Apps environment + two apps (staging, production), both scale to zero when idle
 //   PostgreSQL Flexible Server (Burstable B1ms, 32 GB, auto-grow off) with one database per environment
+//   Per environment, two Container Apps Jobs running the importer image:
+//     <app>-import   starts when import_jobs has queued work (KEDA postgresql scaler), drains it, stops
+//     <app>-updates  every hour: asks Steam which catalog mods changed and queues their new versions
 //
 // Deploy (see docs/SETUP-AZURE.md):
 //   az deployment group create -g rg-bceditor -f infra/main.bicep -p infra/main.bicepparam
@@ -16,6 +19,9 @@ param prefix string = 'bceditor'
 
 @description('Container image to start with. The pipeline replaces it on every deploy.')
 param image string = 'ghcr.io/ngm24516/bc-category-editor:main'
+
+@description('Importer image (SteamCMD + Python) for the import and update-check jobs. The pipeline replaces it on every deploy.')
+param importerImage string = 'ghcr.io/ngm24516/bc-category-editor-importer:main'
 
 @description('Postgres administrator login (also used by the app for now).')
 param postgresAdminLogin string = 'bcadmin'
@@ -178,6 +184,105 @@ resource apps 'Microsoft.App/containerApps@2024-03-01' = [for (e, i) in environm
           }
         ]
       }
+    }
+  }
+}]
+
+// The importer: runs only while there is queued work. KEDA polls the queue every 30 s.
+resource importJobs 'Microsoft.App/jobs@2024-03-01' = [for (e, i) in environments: {
+  name: '${prefix}-${e.name}-import'
+  location: location
+  tags: union(tags, { environment: e.name })
+  dependsOn: [databases[i], pgAllowAzure]
+  properties: {
+    environmentId: env.id
+    configuration: {
+      triggerType: 'Event'
+      replicaTimeout: 3600
+      replicaRetryLimit: 0 // the worker records failures on the job row itself
+      secrets: [
+        {
+          name: 'database-url'
+          value: 'postgres://${postgresAdminLogin}:${uriComponent(postgresAdminPassword)}@${pg.properties.fullyQualifiedDomainName}:5432/${e.database}?sslmode=require'
+        }
+      ]
+      eventTriggerConfig: {
+        parallelism: 1
+        replicaCompletionCount: 1
+        scale: {
+          minExecutions: 0
+          maxExecutions: 2
+          pollingInterval: 30
+          rules: [
+            {
+              name: 'queued-imports'
+              type: 'postgresql'
+              metadata: {
+                query: 'SELECT count(*) FROM import_jobs WHERE status = \'queued\''
+                targetQueryValue: '1'
+              }
+              auth: [
+                { secretRef: 'database-url', triggerParameter: 'connection' }
+              ]
+            }
+          ]
+        }
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'importer'
+          image: importerImage
+          args: [ 'run' ]
+          env: [ { name: 'DATABASE_URL', secretRef: 'database-url' } ]
+          resources: {
+            cpu: json('2.0') // more CPU also brings more scratch disk for large downloads
+            memory: '4Gi'
+          }
+        }
+      ]
+    }
+  }
+}]
+
+// The hourly update check. Light: one Steam API call per 100 mods, then it queues work for the importer.
+resource updateJobs 'Microsoft.App/jobs@2024-03-01' = [for (e, i) in environments: {
+  name: '${prefix}-${e.name}-updates'
+  location: location
+  tags: union(tags, { environment: e.name })
+  dependsOn: [databases[i], pgAllowAzure]
+  properties: {
+    environmentId: env.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaTimeout: 600
+      replicaRetryLimit: 1
+      secrets: [
+        {
+          name: 'database-url'
+          value: 'postgres://${postgresAdminLogin}:${uriComponent(postgresAdminPassword)}@${pg.properties.fullyQualifiedDomainName}:5432/${e.database}?sslmode=require'
+        }
+      ]
+      scheduleTriggerConfig: {
+        cronExpression: '17 * * * *' // every hour at :17 (UTC), away from the busy top of the hour
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'updates'
+          image: importerImage
+          args: [ 'check-updates' ]
+          env: [ { name: 'DATABASE_URL', secretRef: 'database-url' } ]
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+        }
+      ]
     }
   }
 }]

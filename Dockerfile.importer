@@ -1,0 +1,26 @@
+# The importer job: SteamCMD + Python. Runs as an Azure Container Apps Job, never as a web service.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl lib32gcc-s1 lib32stdc++6 locales python3 python3-venv \
+ && sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && dpkg-reconfigure --frontend=noninteractive locales \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home --uid 1000 importer
+
+RUN python3 -m venv /opt/venv \
+ && /opt/venv/bin/pip install --no-cache-dir "pillow>=12,<14" "psycopg[binary]>=3.2,<4"
+
+# SteamCMD from Valve (32-bit, hence the lib32 packages). It updates itself on first run; doing that here makes
+# jobs start faster. A failed update here isn't fatal: the job updates it on its first run instead.
+RUN mkdir -p /opt/steamcmd \
+ && curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar -xz -C /opt/steamcmd \
+ && chown -R importer:importer /opt/steamcmd
+USER importer
+RUN /opt/steamcmd/steamcmd.sh +quit || true
+
+COPY --chown=importer:importer importer /app/importer
+WORKDIR /app/importer
+ENV PATH=/opt/venv/bin:$PATH STEAMCMD=/opt/steamcmd/steamcmd.sh WORK_DIR=/tmp/work PYTHONUNBUFFERED=1 \
+    LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+ENTRYPOINT ["python3", "worker.py"]
+CMD ["run"]

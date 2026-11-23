@@ -18,6 +18,9 @@ sign-in and Postgres, deployed as one container to Azure Container Apps. See REA
   `mod_versions`, `catalog_items`, `icon_sheets`. A version is never changed after it's written (the API caches
   it forever); an update is a new version. Setups choose mods in `set_mods` (user data, RLS).
 - **Importer code (`importer/pzcatalog`) only reads files.** Never execute, `require` or `eval` anything from a mod.
+- **Imports need a signed-in user and are recorded** (`import_requests`, RLS) against that user; jobs carry
+  `requested_by`; the first import of a mod sets `mods.created_by`. The API only queues `import_jobs`; only the
+  worker downloads. Daily limits live in `LIMITS` (server/imports.js).
 - Signed out, the editor still works with edits kept in the browser; it needs the API for the item list.
 - **Styles live in `web/src/app.css`** (Tailwind v4, every rule through `@apply` or Tailwind's theme variables).
   `web/app.css` is generated: never edit or commit it. Tailwind doesn't scan the page (`source(none)`), so a
@@ -30,6 +33,7 @@ sign-in and Postgres, deployed as one container to Azure Container Apps. See REA
 npm run lint
 python3 -m unittest discover -s importer/tests
 TEST_DATABASE_URL=postgres://bc_app:bc_app@localhost:5432/bceditor_test npm test
+TEST_DATABASE_URL=postgres://bc_app:bc_app@localhost:5432/bceditor_test python3 -m unittest discover -s importer/tests
 ```
 
 The test database must be connected as a non-superuser (`db/init-local.sql` creates `bc_app`), because

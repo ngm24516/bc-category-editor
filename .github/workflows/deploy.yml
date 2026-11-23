@@ -28,6 +28,7 @@ jobs:
       packages: write
     outputs:
       image: ${{ steps.meta.outputs.image }}
+      importer: ${{ steps.meta.outputs.importer }}
     steps:
       - uses: actions/checkout@v4
       - id: meta
@@ -35,6 +36,8 @@ jobs:
           repo="ghcr.io/${GITHUB_REPOSITORY,,}"
           echo "image=$repo:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
           echo "latest=$repo:main" >> "$GITHUB_OUTPUT"
+          echo "importer=$repo-importer:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "importer_latest=$repo-importer:main" >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -47,6 +50,18 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.image }}
             ${{ steps.meta.outputs.latest }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Build and push the importer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.importer
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.importer }}
+            ${{ steps.meta.outputs.importer_latest }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -74,6 +89,13 @@ jobs:
           az extension add --name containerapp --upgrade --only-show-errors
           az containerapp update --name "${{ vars.STAGING_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --image "${{ needs.image.outputs.image }}" --only-show-errors -o none
+          for job in "${{ vars.STAGING_APP_NAME }}-import" "${{ vars.STAGING_APP_NAME }}-updates"; do
+            if az containerapp job show -n "$job" -g "${{ vars.AZURE_RESOURCE_GROUP }}" -o none 2>/dev/null; then
+              az containerapp job update -n "$job" -g "${{ vars.AZURE_RESOURCE_GROUP }}" --image "${{ needs.image.outputs.importer }}" --only-show-errors -o none
+            else
+              echo "::warning::Job $job doesn't exist yet. Run the az deployment command in docs/SETUP-AZURE.md to create it."
+            fi
+          done
           fqdn=$(az containerapp show --name "${{ vars.STAGING_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --query properties.configuration.ingress.fqdn -o tsv)
           echo "url=https://$fqdn" >> "$GITHUB_OUTPUT"
@@ -109,6 +131,13 @@ jobs:
           az extension add --name containerapp --upgrade --only-show-errors
           az containerapp update --name "${{ vars.PROD_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --image "${{ needs.image.outputs.image }}" --only-show-errors -o none
+          for job in "${{ vars.PROD_APP_NAME }}-import" "${{ vars.PROD_APP_NAME }}-updates"; do
+            if az containerapp job show -n "$job" -g "${{ vars.AZURE_RESOURCE_GROUP }}" -o none 2>/dev/null; then
+              az containerapp job update -n "$job" -g "${{ vars.AZURE_RESOURCE_GROUP }}" --image "${{ needs.image.outputs.importer }}" --only-show-errors -o none
+            else
+              echo "::warning::Job $job doesn't exist yet. Run the az deployment command in docs/SETUP-AZURE.md to create it."
+            fi
+          done
           fqdn=$(az containerapp show --name "${{ vars.PROD_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --query properties.configuration.ingress.fqdn -o tsv)
           echo "url=https://$fqdn" >> "$GITHUB_OUTPUT"
