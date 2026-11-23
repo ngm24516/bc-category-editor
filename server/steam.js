@@ -1,5 +1,7 @@
 // Steam's public Workshop API: item details and collection contents. Neither call needs an API key.
-// The base URL is configurable only so tests can point at a fake Steam.
+// When Steam removes a collection for breaking its rules, the API stops listing its items but the public
+// collection page still shows them, so collectionFromPage() reads the item ids from that page.
+// The base URLs are configurable only so tests can point at a fake Steam.
 export const PZ_APP_ID = 108600;
 
 // "https://steamcommunity.com/sharedfiles/filedetails/?id=123", "…/workshop/filedetails/?id=123", or "123".
@@ -14,8 +16,18 @@ export function parseWorkshopId(text) {
   return id && /^\d{4,20}$/.test(id) ? id : null;
 }
 
-export function createSteam({ apiBase = "https://api.steampowered.com", fetchImpl = fetch } = {}) {
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", "#39": "'" };
+const decodeEntities = t => t.replace(/&(#\d{1,6}|#x[0-9a-f]{1,6}|[a-z]{2,5});/gi, (all, e) => {
+  if (e[0] === "#") { const n = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10); return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : all; }
+  return ENTITIES[e.toLowerCase()] ?? all;
+});
+
+const PAGE_LIMIT = 4 * 1024 * 1024; // a 500-item collection page is well under 1 MB
+
+export function createSteam({ apiBase = "https://api.steampowered.com", communityBase = "https://steamcommunity.com",
+  fetchImpl = fetch } = {}) {
   const base = apiBase.replace(/\/+$/, "");
+  const community = communityBase.replace(/\/+$/, "");
 
   async function post(path, params) {
     const res = await fetchImpl(`${base}/ISteamRemoteStorage/${path}/v1/`, {
@@ -62,5 +74,27 @@ export function createSteam({ apiBase = "https://api.steampowered.com", fetchImp
       .map(ch => String(ch.publishedfileid)).filter(x => /^\d{1,20}$/.test(x));
   }
 
-  return { details, collectionChildren };
+  // { ids, title } from a collection's public page, or null when the page lists no items (not a
+  // collection, or Steam hid the page too). Only reads the page's text: each listed item is marked
+  // id="sharedfile_<id>". Every id found is still checked with details() before anything is queued.
+  async function collectionFromPage(id) {
+    if (!/^\d{1,20}$/.test(id)) return null;
+    const res = await fetchImpl(`${community}/sharedfiles/filedetails/?id=${id}`, {
+      headers: { Accept: "text/html", "Accept-Language": "en" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const html = (await res.text()).slice(0, PAGE_LIMIT);
+    const ids = [];
+    for (const m of html.matchAll(/\bid=["']sharedfile_(\d{1,20})["']/g)) {
+      if (m[1] !== id && !ids.includes(m[1])) ids.push(m[1]);
+    }
+    if (!ids.length) return null;
+    const t = html.match(/<title>([^<]{1,300})<\/title>/i)?.[1] || "";
+    const title = decodeEntities(t.replace(/^\s*Steam (?:Workshop|Community)\s*::\s*/i, "")).trim().slice(0, 200) || null;
+    return { ids, title };
+  }
+
+  return { details, collectionChildren, collectionFromPage };
 }

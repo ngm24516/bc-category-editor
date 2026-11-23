@@ -25,6 +25,7 @@ export function loadConfig(env = process.env) {
     },
     // Overridable only so tests can point at a fake Steam.
     steamApiBase: env.STEAM_API_BASE || "https://api.steampowered.com",
+    steamCommunityBase: env.STEAM_COMMUNITY_BASE || "https://steamcommunity.com",
     // Shown on the admin dashboard; must match the jobs in infra/main.bicep.
     importerPollSeconds: Number(env.IMPORTER_POLL_SECONDS || 30),
     updateCheckMinute: Number(env.UPDATE_CHECK_MINUTE || 17),

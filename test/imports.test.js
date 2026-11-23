@@ -13,7 +13,7 @@ const link = id => `https://steamcommunity.com/sharedfiles/filedetails/?id=${id}
 async function fresh() {
   await h.resetDb();
   await seedBaseGame(pool, () => {});
-  STEAM.items.clear(); STEAM.collections.clear(); STEAM.down = false;
+  STEAM.items.clear(); STEAM.collections.clear(); STEAM.pages.clear(); STEAM.down = false;
 }
 // A mod already in the catalog, as of a given Steam update time (seconds).
 async function inCatalog(workshopId, name, updated) {
@@ -147,6 +147,32 @@ describe("importing a collection", () => {
     assert.equal(by["3200000002"].status, "queued");
     assert.equal(by["3200000005"].status, "skipped");
     assert.match(by["3200000005"].message, /Removed by Steam/);
+  });
+
+  test("a collection Steam hides from its API is read from its public page", async () => {
+    // Removed collections: the API answers "no such item" and lists nothing, but the page still shows the mods.
+    STEAM.items.delete("3200000000");
+    STEAM.collections.delete("3200000000");
+    const item = id => `<div class="collectionItem" id="sharedfile_${id}"><a href="https://steamcommunity.com/sharedfiles/filedetails/?id=${id}">x</a></div>`;
+    STEAM.pages.set("3200000000", `<html><head><title>Steam Workshop::One/Life - Season 3 &amp; more</title></head><body>
+      <div class="workshopItemTitle">One/Life - Season 3</div>
+      <a href="https://steamcommunity.com/sharedfiles/filedetails/?id=3999999999">another collection in the sidebar</a>
+      <div class="collectionChildren">${["3200000001", "3200000002", "3200000003", "3200000002"].map(item).join("")}</div>
+    </body></html>`);
+    const r = await api(alice, "POST", "/api/imports", { link: link("3200000000") });
+    assert.equal(r.status, 201);
+    const q = await r.json();
+    assert.equal(q.kind, "collection");
+    assert.equal(q.title, "One/Life - Season 3 & more");
+    assert.deepEqual(q.items.map(i => [i.workshopId, i.status]).sort(),
+      [["3200000001", "ready"], ["3200000002", "queued"], ["3200000003", "skipped"]]);
+    assert.deepEqual((await jobs()).map(j => j.workshop_id), ["3200000002"]);
+  });
+
+  test("an item that is neither public nor a listed collection is still a clear 404", async () => {
+    const r = await api(alice, "POST", "/api/imports", { link: link("3299999999") });
+    assert.equal(r.status, 404);
+    assert.match((await r.json()).message, /no public Workshop item/);
   });
 
   test("one collection a day", async () => {
