@@ -30,6 +30,9 @@ Browser ──► Azure Container Apps (one container, one origin)
   each item anonymously with SteamCMD, reads its files and writes a new catalog version. Every request is
   recorded against the account that made it, and each mod shows who first added it. Limits: 10 new mods or
   1 collection a day per user (admins exempt). An hourly job queues new versions of mods that changed.
+- **Mod features:** while importing, the importer also notes tools a mod provides, from its file names
+  (`importer/pzcatalog/features.py`, stored in `mod_versions.features`). The editor shows **Stockroom books…**
+  only when a mod in the setup ships Stockroom (`media/lua/*/Stockroom/Storage.lua`).
 - **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
   `ADMIN_DISCORD_IDS`. Shows the queue, when the importer and the hourly update check run next and last, every
   finished import with its worker log, and each importer run (`importer_runs`). Failed imports can be retried.

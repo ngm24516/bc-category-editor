@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pzcatalog import COLS, GAME_VERSION, PER_SHEET, TILE  # noqa: E402
 from pzcatalog.build import build_layer  # noqa: E402
+from pzcatalog.features import detect_features  # noqa: E402
 from pzcatalog.rules import bc_lua_root  # noqa: E402
 from pzcatalog.scripts import workshop_mods  # noqa: E402
 
@@ -148,7 +149,7 @@ def base_props(conn):
     return row[0]
 
 
-def write_version(conn, job, title, mod_ids, updated, layer):
+def write_version(conn, job, title, mod_ids, updated, layer, features=()):
     """One transaction: the mod (created on first import, crediting who asked), the version, items, names, icons."""
     label = updated.strftime("%Y-%m-%d %H:%M UTC") if updated else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     with conn.cursor() as cur:
@@ -162,10 +163,10 @@ def write_version(conn, job, title, mod_ids, updated, layer):
             return mod_id, existing[0]
         icons = {"tile": TILE, "cols": COLS, "perSheet": PER_SHEET, "sheets": len(layer["sheets"])}
         cur.execute("""INSERT INTO mod_versions (mod_id, label, source_updated_at, game_version, mod_ids, icons,
-                                                 item_count, requested_by, source_title)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                                                 item_count, requested_by, source_title, features)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                     (mod_id, label, updated, ".".join(map(str, GAME_VERSION)), mod_ids, Jsonb(icons),
-                     len(layer["items"]), job["requested_by"], title))
+                     len(layer["items"]), job["requested_by"], title, list(features)))
         version_id = cur.fetchone()[0]
         with cur.copy("COPY catalog_items (version_id, full_type, name, display_category, default_category, "
                       "item_type, icon_tile, icon_name) FROM STDIN") as cp:
@@ -232,10 +233,13 @@ def process(conn, job, rules, props, work_dir):
         media = [m for mod in mods for m in mod["media"]]
         layer = build_layer(media, rules.get(), base_props=props,
                             mod_ids=[m["id"] for m in mods], workshop_ids=[ws])
+        features = detect_features(media)
         title = info.get("title") or job["title"] or mods[0]["name"]
-        mod_id, version_id = write_version(conn, job, title, [m["id"] for m in mods], info.get("updated"), layer)
+        mod_id, version_id = write_version(conn, job, title, [m["id"] for m in mods], info.get("updated"), layer,
+                                           features)
         conn.commit()
-        log(f"Imported {ws} '{title}': {len(layer['items'])} items, {len(layer['sheets'])} icon sheet(s)")
+        log(f"Imported {ws} '{title}': {len(layer['items'])} items, {len(layer['sheets'])} icon sheet(s)"
+            + (f", features: {', '.join(features)}" if features else ""))
         finish(conn, job["id"], "done", mod_id, version_id)
         return True
     except Exception as err:  # noqa: BLE001 - every failure is recorded on the job, never lost

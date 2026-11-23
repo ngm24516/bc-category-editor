@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from PIL import Image  # noqa: E402
 
 from pzcatalog.build import build_layer  # noqa: E402
+from pzcatalog.features import detect_features  # noqa: E402
 from pzcatalog.rules import default_categories  # noqa: E402
 from pzcatalog.scripts import parse_scripts, workshop_mods  # noqa: E402
 
@@ -90,6 +91,18 @@ class LayerTests(unittest.TestCase):
             self.assertEqual(rows["Base.Axe"][5], -1, "no icon of its own: the editor reuses the base game's")
             self.assertEqual(rows["Base.Axe"][6], "Axe")
             self.assertEqual(len(layer["sheets"]), 1)
+
+
+class FeatureTests(unittest.TestCase):
+    def test_stockroom_is_found_by_its_storage_file_in_any_lua_side(self):
+        with tempfile.TemporaryDirectory() as d:
+            plain, sr = os.path.join(d, "a", "media"), os.path.join(d, "b", "media")
+            write(os.path.join(plain, "lua", "client", "Stockroom", "README.lua"), "")   # folder name alone isn't enough
+            write(os.path.join(plain, "lua", "client", "Other", "Storage.lua"), "")      # nor the file elsewhere
+            self.assertEqual(detect_features([plain]), [])
+            write(os.path.join(sr, "lua", "shared", "StockRoom", "storage.lua"), "")
+            self.assertEqual(detect_features([plain, sr]), ["stockroom"])
+            self.assertEqual(detect_features([os.path.join(d, "missing")]), [])
 
 
 if __name__ == "__main__":

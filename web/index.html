@@ -25,7 +25,7 @@
   <div class="files">
     <input type="file" id="fileIn" accept=".ini,.txt" multiple hidden>
     <button id="btnMods">Mods…</button>
-    <button id="btnStock">Stockroom books…</button>
+    <button id="btnStock" hidden title="Shown when a mod in this setup includes Stockroom">Stockroom books…</button>
     <button id="btnLoad">Load .ini files…</button>
     <button id="btnSave" class="primary">Save to game…</button>
   </div>
@@ -1036,6 +1036,16 @@ async function buildCatalog() {
   ITEMS = [...byFt.values()].map(it => ({ ...it, key: makeKey(it.name, it.ft) }));
   BYFT = new Map(ITEMS.map(it => [it.ft, it]));
   ensureUnknownItems();
+  updateFeatureButtons();
+}
+
+// Tools that only make sense with a particular mod: shown when a mod in this setup provides the feature
+// (the importer detects it from the mod's files; see importer/pzcatalog/features.py).
+const hasFeature = f => MODLIST.some(id => (MODINFO.get(id)?.features || []).includes(f));
+function updateFeatureButtons() {
+  const stock = hasFeature("stockroom");
+  $("btnStock").hidden = !stock;
+  if (!stock) $("stockModal").classList.remove("on");
 }
 
 async function setMods(list) {
