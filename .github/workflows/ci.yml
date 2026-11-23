@@ -34,6 +34,8 @@ jobs:
         run: psql -h localhost -U postgres -f db/init-local.sql
       - name: Lint
         run: npm run lint
+      - name: Build the stylesheet (Tailwind)
+        run: npm run build:css
       - name: Importer unit tests (Python)
         run: |
           pip install --quiet pillow
@@ -81,6 +83,7 @@ jobs:
           done
           curl -fsS http://localhost:3000/readyz
           curl -fsS -o /dev/null http://localhost:3000/
+          curl -fsS http://localhost:3000/app.css | grep -q 'Albert Sans'
           curl -fsS http://localhost:3000/api/catalog/base | grep -q '"kind":"base"'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/me)" = "401"
       - name: Container logs

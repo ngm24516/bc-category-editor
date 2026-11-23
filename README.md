@@ -48,6 +48,16 @@ docker compose up --build
 
 Open <http://localhost:3000>.
 
+## Styles
+
+The page is styled with Tailwind CSS v4. Edit `web/src/app.css`, then build `web/app.css` (not committed;
+the Docker image and CI build it):
+
+```powershell
+npm run build:css     # once
+npm run dev:css       # rebuild on every save while you work
+```
+
 ## Tests
 
 ```powershell

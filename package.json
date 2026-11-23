@@ -12,7 +12,9 @@
     "dev": "node --watch server/server.js",
     "migrate": "node server/migrate.js",
     "lint": "eslint .",
-    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\""
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
+    "build:css": "tailwindcss -i web/src/app.css -o web/app.css --minify",
+    "dev:css": "tailwindcss -i web/src/app.css -o web/app.css --watch"
   },
   "dependencies": {
     "compression": "^1.8.2",
@@ -21,7 +23,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@tailwindcss/cli": "^4.3.5",
     "eslint": "^10.15.0",
-    "globals": "^17.14.0"
+    "globals": "^17.14.0",
+    "tailwindcss": "^4.3.5"
   }
 }
