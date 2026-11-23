@@ -1,0 +1,26 @@
+# Builds the importer image and downloads a real Workshop item (Better Containers) with SteamCMD inside it.
+# Runs when the importer changes, or by hand. Separate from CI because it depends on Steam being up.
+name: Importer smoke test
+
+on:
+  pull_request:
+    paths:
+      - "importer/**"
+      - "Dockerfile.importer"
+      - ".github/workflows/importer-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: SteamCMD download in the importer image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the importer image
+        run: docker build -f Dockerfile.importer -t importer:ci .
+      - name: Download Better Containers and read its rule files
+        run: docker run --rm importer:ci smoke

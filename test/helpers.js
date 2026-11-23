@@ -25,7 +25,35 @@ function cookiesFrom(res) {
   return res.headers.getSetCookie().map(c => c.split(";")[0]).filter(c => !c.endsWith("="));
 }
 
+// Fake Steam: tests put Workshop items and collections here.
+export const STEAM = { items: new Map(), collections: new Map(), down: false };
+
 export async function startHarness({ fetchImpl } = {}) {
+  const steamServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      if (STEAM.down) { res.statusCode = 503; return res.end("{}"); }
+      const p = new URLSearchParams(body);
+      const ids = [...p.entries()].filter(([k]) => k.startsWith("publishedfileids[")).map(([, v]) => v);
+      if (req.url === "/ISteamRemoteStorage/GetCollectionDetails/v1/") {
+        const children = STEAM.collections.get(ids[0]);
+        return res.end(JSON.stringify({ response: { result: 1, collectiondetails: [children
+          ? { publishedfileid: ids[0], result: 1, children: children.map(c => ({ publishedfileid: c, filetype: 0 })) }
+          : { publishedfileid: ids[0], result: 9 }] } }));
+      }
+      if (req.url === "/ISteamRemoteStorage/GetPublishedFileDetails/v1/") {
+        return res.end(JSON.stringify({ response: { result: 1, publishedfiledetails: ids.map(id => {
+          const d = STEAM.items.get(id);
+          return d ? { publishedfileid: id, result: 1, consumer_app_id: d.app ?? 108600, title: d.title, time_updated: d.updated ?? 1_790_000_000, file_size: String(d.size ?? 1000) }
+                   : { publishedfileid: id, result: 9 };
+        }) } }));
+      }
+      res.statusCode = 404; res.end("{}");
+    });
+  });
+  const steamUrl = await listen(steamServer);
   const discord = http.createServer((req, res) => {
     let body = "";
     req.on("data", c => { body += c; });
@@ -64,6 +92,7 @@ export async function startHarness({ fetchImpl } = {}) {
     DISCORD_CLIENT_ID: "test-client", DISCORD_CLIENT_SECRET: "test-secret",
     DISCORD_API_BASE: discordUrl + "/api", DISCORD_AUTHORIZE_URL: discordUrl + "/oauth2/authorize",
     ADMIN_DISCORD_IDS: "100000000000000099",
+    STEAM_API_BASE: steamUrl,
   });
   const app = createApp({ pool, config, fetchImpl });
   server.on("request", app);
@@ -94,6 +123,6 @@ export async function startHarness({ fetchImpl } = {}) {
 
   return {
     appUrl, pool, resetDb, login, api, cookiesFrom, DB_URL,
-    stop: async () => { server.close(); discord.close(); await pool.end(); },
+    stop: async () => { server.close(); discord.close(); steamServer.close(); await pool.end(); },
   };
 }

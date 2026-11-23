@@ -174,6 +174,15 @@
     </div>
     <ul class="modlist" id="modResults"></ul>
     <p class="help" id="modHint" style="margin:0">The catalog holds every mod anyone has imported, at its newest version.</p>
+    <div class="import">
+      <label for="importLink" class="flabel">Missing a mod? Import it from the Steam Workshop</label>
+      <div class="importrow">
+        <input type="text" id="importLink" placeholder="Paste a Workshop mod or collection link" autocomplete="off">
+        <button id="importGo" class="primary">Import</button>
+      </div>
+      <p class="help" id="importNote"></p>
+      <ul class="modlist" id="importList"></ul>
+    </div>
     <div class="acts"><button id="modsClose" class="primary">Done</button></div>
   </div>
 </div>
@@ -1043,12 +1052,12 @@ async function setMods(list) {
 }
 function updateModsButton() { $("btnMods").textContent = MODLIST.length ? "Mods (" + MODLIST.length + ")…" : "Mods…"; }
 
-function wsLink(id) { return id ? ' <a href="https://steamcommunity.com/sharedfiles/filedetails/?id=' + esc(id) + '" target="_blank" rel="noopener">Workshop ↗</a>' : ""; }
+function wsLink(id) { return id ? ' · <a href="https://steamcommunity.com/sharedfiles/filedetails/?id=' + esc(id) + '" target="_blank" rel="noopener">Workshop ↗</a>' : ""; }
 function renderModList() {
   const rows = ['<li class="base"><span class="nm">Project Zomboid<small>Base game · ' + esc(BASE ? BASE.label : "") + ' · always included</small></span></li>'];
   MODLIST.forEach((id, i) => {
     const m = MODINFO.get(id);
-    rows.push('<li><span class="nm">' + esc(m.name) + '<small>' + (m.itemCount || 0).toLocaleString() + ' items · updated ' + esc(m.label || "") + wsLink(m.workshopId) + '</small></span>' +
+    rows.push('<li><span class="nm">' + esc(m.name) + '<small>' + (m.itemCount || 0).toLocaleString() + ' items · updated ' + esc(m.label || "") + (m.addedBy ? ' · added by ' + esc(m.addedBy) : '') + wsLink(m.workshopId) + '</small></span>' +
       '<button data-up="' + i + '" title="Load earlier"' + (i ? "" : " disabled") + '>↑</button>' +
       '<button data-down="' + i + '" title="Load later"' + (i < MODLIST.length - 1 ? "" : " disabled") + '>↓</button>' +
       '<button data-rm="' + i + '">Remove</button></li>');
@@ -1071,7 +1080,7 @@ async function searchMods() {
   try { found = await getJSON("/api/catalog/mods?q=" + encodeURIComponent(q)); } catch (e) { return; }
   if (seq !== searchSeq) return;
   for (const m of found) MODINFO.set(m.id, m);
-  $("modResults").innerHTML = found.map(m => '<li><span class="nm">' + esc(m.name) + '<small>' + (m.itemCount || 0).toLocaleString() + ' items' + wsLink(m.workshopId) + '</small></span>' +
+  $("modResults").innerHTML = found.map(m => '<li><span class="nm">' + esc(m.name) + '<small>' + (m.itemCount || 0).toLocaleString() + ' items' + (m.addedBy ? ' · added by ' + esc(m.addedBy) : '') + wsLink(m.workshopId) + '</small></span>' +
     (MODLIST.includes(m.id) ? '<span class="muted" style="font-size:12px">Added</span>' : '<button data-add="' + esc(m.id) + '" class="primary">Add</button>') + '</li>').join("") ||
     '<li class="muted">' + (q ? "No mod in the catalog matches that." : "The catalog has no mods yet.") + '</li>';
 }
@@ -1080,8 +1089,80 @@ $("modResults").onclick = e => {
   const b = e.target.closest("button[data-add]"); if (!b) return;
   b.disabled = true; setMods([...MODLIST, b.dataset.add]).then(searchMods);
 };
-$("btnMods").onclick = () => { renderModList(); searchMods(); $("modsModal").classList.add("on"); $("modSearch").focus(); };
-$("modsClose").onclick = () => $("modsModal").classList.remove("on");
+$("btnMods").onclick = () => { renderModList(); searchMods(); loadImports(); $("modsModal").classList.add("on"); $("modSearch").focus(); };
+$("modsClose").onclick = () => { $("modsModal").classList.remove("on"); clearTimeout(importTimer); };
+
+// ------------------------------------------------------------ importing from the Steam Workshop (signed in only)
+let importTimer = null, importBusy = false;
+const STATUS_LABEL = { queued: "Queued", running: "Importing", ready: "Ready", failed: "Failed", skipped: "Skipped" };
+function badge(st) { return '<span class="badge ' + st + '">' + STATUS_LABEL[st] + '</span>'; }
+
+async function loadImports() {
+  clearTimeout(importTimer);
+  const signedIn = Account.signedIn();
+  $("importLink").disabled = $("importGo").disabled = !signedIn;
+  if (!signedIn) {
+    $("importNote").innerHTML = Account.available() ? '<a href="/auth/discord/login">Log in with Discord</a> to import mods. Each import is recorded against your account.' : "";
+    $("importList").innerHTML = "";
+    return;
+  }
+  let d;
+  try { d = await getJSON("/api/imports"); } catch (e) { return; }
+  const L = d.limits;
+  $("importNote").textContent = L.exempt ? "Admins have no daily import limit."
+    : "Today: " + L.modsToday + " of " + L.modsPerDay + " new mods, " + L.collectionsToday + " of " + L.collectionsPerDay + " collection. Mods already in the catalog don't count.";
+  renderImports(d.requests.slice(0, 5));
+  const waiting = d.requests.some(q => q.items.some(i => i.status === "queued" || i.status === "running"));
+  if (waiting && $("modsModal").classList.contains("on")) importTimer = setTimeout(loadImports, 5000);
+}
+
+function importItemRow(i) {
+  const added = i.modId && MODLIST.includes(i.modId);
+  return '<li><span class="nm">' + esc(i.title || "Workshop item " + i.workshopId) +
+    '<small>' + (i.message ? esc(i.message) + " · " : "") + wsLink(i.workshopId).replace(/^ · /, "") + '</small></span>' + badge(i.status) +
+    (i.status === "ready" ? (added ? '<span class="muted" style="font-size:12px">Added</span>' : '<button data-addmod="' + esc(i.modId) + '">Add</button>') : "") + '</li>';
+}
+function renderImports(requests) {
+  $("importList").innerHTML = requests.map(q => {
+    if (q.kind === "mod") return importItemRow(q.items[0]);
+    const n = st => q.items.filter(i => i.status === st).length;
+    const ready = q.items.filter(i => i.status === "ready" && !MODLIST.includes(i.modId));
+    return '<li class="coll"><span class="nm">Collection: ' + esc(q.title || q.workshopId) + '<small>' +
+      [["ready", "ready"], ["queued", "queued"], ["running", "importing"], ["failed", "failed"], ["skipped", "skipped"]]
+        .filter(([st]) => n(st)).map(([st, w]) => n(st) + " " + w).join(" · ") + '</small></span>' +
+      (ready.length ? '<button data-addall="' + esc(q.id) + '" class="primary">Add ' + ready.length + ' ready</button>' : "") +
+      '</li>' + q.items.filter(i => i.status !== "ready" || !MODLIST.includes(i.modId)).slice(0, 25).map(importItemRow).join("");
+  }).join("");
+  $("importList").dataset.requests = JSON.stringify(requests.map(q => ({ id: q.id, ready: q.items.filter(i => i.status === "ready").map(i => i.modId) })));
+}
+
+$("importList").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.addmod) { b.disabled = true; setMods([...MODLIST, b.dataset.addmod]).then(loadImports).then(searchMods); }
+  if (b.dataset.addall) {
+    const q = JSON.parse($("importList").dataset.requests || "[]").find(x => x.id === b.dataset.addall);
+    if (q) { b.disabled = true; setMods([...MODLIST, ...q.ready.filter(id => !MODLIST.includes(id))]).then(loadImports).then(searchMods); }
+  }
+};
+
+async function startImport() {
+  const link = $("importLink").value.trim();
+  if (!link || importBusy) return;
+  importBusy = true; $("importGo").disabled = true; $("importNote").textContent = "Asking Steam…";
+  try {
+    const r = await fetch("/api/imports", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { $("importNote").textContent = d.message || "That didn't work. Try again."; return; }
+    $("importLink").value = "";
+    const q = d.items.filter(i => i.status === "queued" || i.status === "running").length;
+    toast(q ? "Queued " + q + " for import. They usually take a few minutes." : "Nothing new to import: it's already in the catalog.");
+    await loadImports();
+  } catch (e) {
+    $("importNote").textContent = "Couldn't reach the server. Try again.";
+  } finally { importBusy = false; $("importGo").disabled = false; }
+}
+$("importGo").onclick = startImport;
+$("importLink").onkeydown = e => { if (e.key === "Enter") startImport(); };
 
 // ------------------------------------------------------------ Discord account: setups saved on the server
 // Works only when the page is served by the app (Azure). Opened anywhere else, /api is missing and the
@@ -1274,7 +1355,8 @@ const Account = (() => {
     if (enabled && cur && !conflict && sig(state()) !== lastSynced) { save(); e.preventDefault(); }
   });
 
-  return { init, scheduleSave, currentId: () => (enabled && cur ? cur.id : null) };
+  return { init, scheduleSave, currentId: () => (enabled && cur ? cur.id : null),
+    signedIn: () => enabled, available: () => !$("acct").hidden };
 })();
 
 // ------------------------------------------------------------ boot

@@ -25,6 +25,11 @@ Browser ──► Azure Container Apps (one container, one origin)
 - **CSRF:** state-changing requests must come from the site's own origin.
 - **Catalog:** the base game plus every Workshop mod anyone has imported, shared by all users. Each setup picks
   which mods it uses; the editor shows the base game plus those mods' newest versions.
+- **Importing:** signed-in users paste a Workshop mod or collection link. The API asks Steam what it is and
+  queues what the catalog lacks; the **importer** (`importer/worker.py`, an Azure Container Apps Job) downloads
+  each item anonymously with SteamCMD, reads its files and writes a new catalog version. Every request is
+  recorded against the account that made it, and each mod shows who first added it. Limits: 10 new mods or
+  1 collection a day per user (admins exempt). An hourly job queues new versions of mods that changed.
 - Signed out, the editor still works and keeps edits (and the chosen mods) in that browser only.
 
 ## Pipeline
@@ -74,8 +79,9 @@ npm run lint
 |---|---|
 | `web/` | The editor page |
 | `seed/vanilla/` | The base game's items and icons, loaded into the catalog on start-up (built by `importer/seed_vanilla.py`) |
-| `importer/` | Python that reads game and Workshop files into catalog data (scripts, translations, Better Containers rules, icons) |
-| `server/` | Express app: `auth.js` (Discord + sessions), `sets.js` (setups API), `catalog.js` (shared item catalog), `migrate.js`, `app.js` (wiring) |
+| `importer/` | `pzcatalog/` reads game and Workshop files into catalog data; `worker.py` is the import job and hourly update check |
+| `Dockerfile.importer` | The importer image: SteamCMD + Python |
+| `server/` | Express app: `auth.js` (Discord + sessions), `sets.js` (setups API), `catalog.js` (shared item catalog), `imports.js` + `steam.js` (import requests), `migrate.js`, `app.js` (wiring) |
 | `db/migrations/` | SQL migrations, applied in order on start-up (append only; never edit one that has shipped) |
 | `test/` | API tests (real Postgres, fake Discord) |
 | `infra/` | Bicep for all Azure resources |

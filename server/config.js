@@ -23,6 +23,8 @@ export function loadConfig(env = process.env) {
       authorizeUrl: env.DISCORD_AUTHORIZE_URL || "https://discord.com/oauth2/authorize",
       apiBase: (env.DISCORD_API_BASE || "https://discord.com/api").replace(/\/+$/, ""),
     },
+    // Overridable only so tests can point at a fake Steam.
+    steamApiBase: env.STEAM_API_BASE || "https://api.steampowered.com",
     adminDiscordIds: new Set((env.ADMIN_DISCORD_IDS || "").split(",").map(s => s.trim()).filter(Boolean)),
     sessionDays: Number(env.SESSION_DAYS || 30),
     migrateOnStart: env.MIGRATE_ON_START !== "false",
