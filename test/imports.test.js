@@ -95,6 +95,13 @@ describe("importing one mod", () => {
     assert.equal((await api(admin, "POST", "/api/imports", { link: "3100000011" })).status, 201);
   });
 
+  test("a removed item gets a message that says so", async () => {
+    STEAM.items.set("3000000003", { title: "Gone", banned: true });
+    const r = await api(alice, "POST", "/api/imports", { link: "3000000003" });
+    assert.equal(r.status, 410);
+    assert.match((await r.json()).message, /Steam has removed this Workshop item/);
+  });
+
   test("Steam being down is a clear 502", async () => {
     STEAM.down = true;
     const r = await api(alice, "POST", "/api/imports", { link: "2200148440" });
@@ -126,6 +133,20 @@ describe("importing a collection", () => {
     assert.match(by["3200000003"].message, /Not a Project Zomboid mod/);
     assert.equal(by["3200000004"].status, "skipped");
     assert.deepEqual((await jobs()).map(j => j.workshop_id), ["3200000002"]);
+  });
+
+  test("a collection Steam removed still imports, if Steam lists its items", async () => {
+    STEAM.items.set("3200000000", { title: "One/Life - Season 3", banned: true });
+    STEAM.items.set("3200000005", { title: "Removed mod", banned: true });
+    STEAM.collections.set("3200000000", ["3200000002", "3200000005"]);
+    const r = await api(alice, "POST", "/api/imports", { link: link("3200000000") });
+    assert.equal(r.status, 201);
+    const q = await r.json();
+    assert.equal(q.title, "One/Life - Season 3");
+    const by = Object.fromEntries(q.items.map(i => [i.workshopId, i]));
+    assert.equal(by["3200000002"].status, "queued");
+    assert.equal(by["3200000005"].status, "skipped");
+    assert.match(by["3200000005"].message, /Removed by Steam/);
   });
 
   test("one collection a day", async () => {
