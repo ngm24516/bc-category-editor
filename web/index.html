@@ -163,6 +163,13 @@ section.view.on { display: flex; }
 .acct .sync { font-size: 12px; color: var(--muted); min-width: 10.5em; }
 .acct .sync.err { color: #b4541a; }
 a.btn { display: inline-block; text-decoration: none; color: inherit; border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 5px 10px; }
+.modlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 34vh; overflow: auto; }
+.modlist li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.modlist li .nm { flex: 1; min-width: 0; }
+.modlist li .nm small { display: block; color: var(--muted); font-size: 11.5px; }
+.modlist li button { padding: 2px 8px; }
+.modlist .fixed { background: var(--accent-soft); }
+.flabel { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
 a.btn.discord { background: #5865f2; border-color: #5865f2; color: #fff; font-weight: 600; }
 
 @media (max-width: 820px) {
@@ -193,6 +200,7 @@ a.btn.discord { background: #5865f2; border-color: #5865f2; color: #fff; font-we
   </div>
   <div class="files">
     <input type="file" id="fileIn" accept=".ini,.txt" multiple hidden>
+    <button id="btnMods">Mods…</button>
     <button id="btnStock">Stockroom books…</button>
     <button id="btnLoad">Load .ini files…</button>
     <button id="btnSave" class="primary">Save to game…</button>
@@ -230,7 +238,7 @@ a.btn.discord { background: #5865f2; border-color: #5865f2; color: #fff; font-we
         <button data-v="custom">Customized</button>
         <button data-v="default">Default</button>
         <button data-v="changed">Changed here</button>
-        <button data-v="unknown">Not on this PC</button>
+        <button data-v="unknown">Not in these mods</button>
         <button data-v="blk">Blacklisted</button>
       </div>
     </div>
@@ -241,7 +249,7 @@ a.btn.discord { background: #5865f2; border-color: #5865f2; color: #fff; font-we
     </div>
     <div class="help">
       <p><b>Default</b> is the category Better Containers picks by itself. It is worked out here from the mod's rule files and the item scripts, so a few may differ from the game. Resetting an item removes your override and the game works out the true default.</p>
-      <p>The item list covers vanilla Project Zomboid plus the Workshop mods it was collected from. Items in your own files that are missing from it show as "Not on this PC".</p>
+      <p>The item list is the base game plus the mods you pick with <b>Mods…</b>. Overrides for items that aren't in those mods are kept and show as "Not in these mods".</p>
     </div>
   </aside>
 
@@ -326,6 +334,21 @@ a.btn.discord { background: #5865f2; border-color: #5865f2; color: #fff; font-we
   </div>
 </div>
 
+<div class="modal" id="modsModal">
+  <div class="box" style="max-width:640px">
+    <h2>Mods in this setup</h2>
+    <p class="muted" style="margin:0;font-size:13px">The item list is the base game plus these mods, in this order. When two define the same item, the later one wins. This only changes the current setup.</p>
+    <ul class="modlist" id="modList"></ul>
+    <div>
+      <label for="modSearch" class="flabel">Add a mod from the catalog</label>
+      <input type="search" id="modSearch" placeholder="Search by name, or paste a Workshop link" autocomplete="off" style="width:100%">
+    </div>
+    <ul class="modlist" id="modResults"></ul>
+    <p class="help" id="modHint" style="margin:0">The catalog holds every mod anyone has imported, at its newest version.</p>
+    <div class="acts"><button id="modsClose" class="primary">Done</button></div>
+  </div>
+</div>
+
 <div class="modal" id="setModal">
   <div class="box" style="max-width:420px">
     <h2>Your setups</h2>
@@ -349,7 +372,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const LS_KEY = "bcedit.draft.v1";
 
-let DATA = null, ITEMS = [], BYFT = new Map(), MODS = [], CATNAMES = {};
+let ITEMS = [], BYFT = new Map(), MODS = [], CATNAMES = {}, ICONSETS = [];
 let overrides = new Map(), defs = new Map(), blacklist = new Set(["lore"]);
 let loaded = { overrides: new Map(), defs: new Map(), label: "" };
 let filtered = [], selected = new Set();
@@ -485,7 +508,7 @@ function saveDraft() {
   saveTimer = setTimeout(() => {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({ o: [...overrides], d: [...defs], b: $("blk").value,
-        lo: [...loaded.overrides], ld: [...loaded.defs], ll: loaded.label, t: Date.now(), a: Account.currentId() }));
+        lo: [...loaded.overrides], ld: [...loaded.defs], ll: loaded.label, t: Date.now(), a: Account.currentId(), m: MODLIST }));
     } catch (e) { /* storage unavailable */ }
   }, 400);
   Account.scheduleSave();
@@ -519,11 +542,14 @@ function applyFilters() {
   renderSelInfo();
 }
 
+// Icon ids are layer * 1e6 + tile: each catalog layer (base game, each mod) has its own icon sheets.
 function iconStyle(idx, size) {
-  if (idx == null || idx < 0 || !DATA.icons) return null;
-  const I = DATA.icons, sheet = Math.floor(idx / I.perSheet), k = idx % I.perSheet;
-  const sc = size / I.tile, x = (k % I.cols) * size, y = Math.floor(k / I.cols) * size;
-  return "background-image:url(icons" + sheet + ".webp);background-size:" + (I.cols * size) + "px auto;background-position:-" + x + "px -" + y + "px;width:" + size + "px;height:" + size + "px";
+  if (idx == null || idx < 0) return null;
+  const I = ICONSETS[Math.floor(idx / 1e6)];
+  if (!I) return null;
+  const t = idx % 1e6, sheet = Math.floor(t / I.perSheet), k = t % I.perSheet;
+  const x = (k % I.cols) * size, y = Math.floor(k / I.cols) * size;
+  return "background-image:url(/api/catalog/versions/" + I.vid + "/icons/" + sheet + ".webp);background-size:" + (I.cols * size) + "px auto;background-position:-" + x + "px -" + y + "px;width:" + size + "px;height:" + size + "px";
 }
 function iconHtml(idx, size) {
   const st = iconStyle(idx, size);
@@ -535,7 +561,7 @@ function buildCatIcons() {
   for (const it of ITEMS) { if (it.icon >= 0) { const c = currentOf(it); if (!catIcon.has(c)) catIcon.set(c, it.icon); } }
 }
 function modLabel(it) {
-  if (it.unknown) return "Not on this PC";
+  if (it.unknown) return "Not in these mods";
   const s = it.src.filter(i => i !== 0);
   const ids = s.length ? s : it.src;
   return ids.map(i => MODS[i][0]).join(", ");
@@ -631,7 +657,7 @@ function fillSelects() {
   if (!catCombo) catCombo = makeCombo("fCat", "Search categories", v => { F.cat = v; $("scroller").scrollTop = 0; applyFilters(); });
   const modOpts = [{ value: "all", label: "All mods", count: ITEMS.length }].concat(
     mods.map(([i, m]) => ({ value: String(i), label: m[0], search: m[1] + " " + m[2], count: counts.get(i) || 0 })),
-    unknown ? [{ value: "unknown", label: "Not on this PC", count: unknown }] : []);
+    unknown ? [{ value: "unknown", label: "Not in these mods", count: unknown }] : []);
   modCombo.setOptions(modOpts, F.mod); F.mod = modCombo.value;
   buildCatIcons();
   const eff = new Map(); for (const it of ITEMS) { const c = currentOf(it); eff.set(c, (eff.get(c) || 0) + 1); }
@@ -1133,6 +1159,101 @@ $("stockApply").onclick = () => {
   toast(n.toLocaleString() + " Stockroom books and magazines reset to default", before);
 };
 
+// ------------------------------------------------------------ catalog: the base game plus this setup's mods
+let MODLIST = [];                 // catalog mod ids for this setup, in load order
+const MODINFO = new Map();        // mod id -> { name, workshopId, versionId, label, itemCount }
+let BASE = null;
+const versionData = new Map();    // version id -> Promise of { items, catNames, icons }
+
+async function getJSON(url) {
+  const r = await fetch(url, { credentials: "same-origin" });
+  if (!r.ok) throw new Error(url + " answered " + r.status);
+  return r.json();
+}
+function loadVersion(id) {
+  if (!versionData.has(id)) versionData.set(id, getJSON("/api/catalog/versions/" + id).catch(e => { versionData.delete(id); throw e; }));
+  return versionData.get(id);
+}
+
+// Rebuilds ITEMS from the base game and MODLIST. Overrides are untouched; overrides for items that
+// aren't in any loaded layer reappear as "not in these mods" items.
+async function buildCatalog() {
+  if (!BASE) BASE = await getJSON("/api/catalog/base");
+  const need = MODLIST.filter(id => !MODINFO.has(id));
+  if (need.length) for (const m of await getJSON("/api/catalog/mods?ids=" + need.join(","))) MODINFO.set(m.id, m);
+  MODLIST = MODLIST.filter(id => MODINFO.has(id));
+  const layers = [BASE, ...MODLIST.map(id => MODINFO.get(id)).filter(m => m.versionId)];
+  const datas = await Promise.all(layers.map(l => loadVersion(l.versionId)));
+
+  MODS = layers.map(l => l.kind === "base" ? ["Project Zomboid", "vanilla base game", "", true] : [l.name, l.workshopId || "", l.workshopId || "", true]);
+  ICONSETS = layers.map((l, i) => ({ vid: l.versionId, cols: datas[i].icons.cols, perSheet: datas[i].icons.perSheet }));
+  CATNAMES = {};
+  const byFt = new Map(), iconByName = new Map();
+  datas.forEach((d, li) => {
+    for (const r of d.items) if (r[5] >= 0 && r[6]) iconByName.set(r[6].toLowerCase(), li * 1e6 + r[5]);
+    for (const [ft, name, dc, def, type, tile, iconName] of d.items) {
+      const icon = tile >= 0 ? li * 1e6 + tile : (iconName ? iconByName.get(iconName.toLowerCase()) ?? -1 : -1);
+      const it = byFt.get(ft);
+      if (!it) byFt.set(ft, { ft, name, dc, def, type, src: [li], icon });
+      else { it.name = name; it.dc = dc; it.def = def; it.type = type; if (icon >= 0) it.icon = icon; if (!it.src.includes(li)) it.src.push(li); }
+    }
+    Object.assign(CATNAMES, d.catNames);
+  });
+  ITEMS = [...byFt.values()].map(it => ({ ...it, key: makeKey(it.name, it.ft) }));
+  BYFT = new Map(ITEMS.map(it => [it.ft, it]));
+  ensureUnknownItems();
+}
+
+async function setMods(list) {
+  const before = MODLIST;
+  MODLIST = list.slice();
+  try { await buildCatalog(); }
+  catch (e) { MODLIST = before; toast("Couldn't load that mod's items. Try again."); return; }
+  selected.clear();
+  refreshAll(); renderModList(); updateModsButton();
+}
+function updateModsButton() { $("btnMods").textContent = MODLIST.length ? "Mods (" + MODLIST.length + ")…" : "Mods…"; }
+
+function wsLink(id) { return id ? ' <a href="https://steamcommunity.com/sharedfiles/filedetails/?id=' + esc(id) + '" target="_blank" rel="noopener">Workshop ↗</a>' : ""; }
+function renderModList() {
+  const rows = ['<li class="fixed"><span class="nm">Project Zomboid<small>Base game · ' + esc(BASE ? BASE.label : "") + ' · always included</small></span></li>'];
+  MODLIST.forEach((id, i) => {
+    const m = MODINFO.get(id);
+    rows.push('<li><span class="nm">' + esc(m.name) + '<small>' + (m.itemCount || 0).toLocaleString() + ' items · updated ' + esc(m.label || "") + wsLink(m.workshopId) + '</small></span>' +
+      '<button data-up="' + i + '" title="Load earlier"' + (i ? "" : " disabled") + '>↑</button>' +
+      '<button data-down="' + i + '" title="Load later"' + (i < MODLIST.length - 1 ? "" : " disabled") + '>↓</button>' +
+      '<button data-rm="' + i + '">Remove</button></li>');
+  });
+  $("modList").innerHTML = rows.join("");
+}
+$("modList").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const l = MODLIST.slice();
+  if (b.dataset.rm) l.splice(+b.dataset.rm, 1);
+  else if (b.dataset.up) { const i = +b.dataset.up; [l[i - 1], l[i]] = [l[i], l[i - 1]]; }
+  else if (b.dataset.down) { const i = +b.dataset.down; [l[i + 1], l[i]] = [l[i], l[i + 1]]; }
+  setMods(l).then(searchMods);
+};
+
+let searchTimer = null, searchSeq = 0;
+async function searchMods() {
+  const seq = ++searchSeq, q = $("modSearch").value.trim();
+  let found;
+  try { found = await getJSON("/api/catalog/mods?q=" + encodeURIComponent(q)); } catch (e) { return; }
+  if (seq !== searchSeq) return;
+  for (const m of found) MODINFO.set(m.id, m);
+  $("modResults").innerHTML = found.map(m => '<li><span class="nm">' + esc(m.name) + '<small>' + (m.itemCount || 0).toLocaleString() + ' items' + wsLink(m.workshopId) + '</small></span>' +
+    (MODLIST.includes(m.id) ? '<span class="muted" style="font-size:12px">Added</span>' : '<button data-add="' + esc(m.id) + '" class="primary">Add</button>') + '</li>').join("") ||
+    '<li class="muted">' + (q ? "No mod in the catalog matches that." : "The catalog has no mods yet.") + '</li>';
+}
+$("modSearch").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(searchMods, 250); };
+$("modResults").onclick = e => {
+  const b = e.target.closest("button[data-add]"); if (!b) return;
+  b.disabled = true; setMods([...MODLIST, b.dataset.add]).then(searchMods);
+};
+$("btnMods").onclick = () => { renderModList(); searchMods(); $("modsModal").classList.add("on"); $("modSearch").focus(); };
+$("modsClose").onclick = () => $("modsModal").classList.remove("on");
+
 // ------------------------------------------------------------ Discord account: setups saved on the server
 // Works only when the page is served by the app (Azure). Opened anywhere else, /api is missing and the
 // account area stays hidden, so the page behaves exactly as before (edits kept in this browser only).
@@ -1141,8 +1262,8 @@ const Account = (() => {
   let enabled = false, sets = [], cur = null, lastSynced = null;
   let timer = null, saving = false, again = false, conflict = false;
 
-  const state = () => ({ overrides: Object.fromEntries(overrides), definitions: Object.fromEntries(defs), blacklist: $("blk").value });
-  const sig = st => JSON.stringify([Object.entries(st.overrides).sort(), Object.entries(st.definitions).sort(), st.blacklist]);
+  const state = () => ({ overrides: Object.fromEntries(overrides), definitions: Object.fromEntries(defs), blacklist: $("blk").value, mods: MODLIST.slice() });
+  const sig = st => JSON.stringify([Object.entries(st.overrides).sort(), Object.entries(st.definitions).sort(), st.blacklist, st.mods || []]);
   function status(text, err) { const t = $("syncTxt"); t.textContent = text; t.classList.toggle("err", !!err); }
 
   async function call(method, path, body) {
@@ -1162,8 +1283,11 @@ const Account = (() => {
   }
   function remember(id) { try { localStorage.setItem(SET_KEY, id); } catch (e) { /* storage unavailable */ } }
 
-  function apply(set) {
+  async function apply(set) {
     cur = { id: set.id, name: set.name, version: set.version };
+    MODLIST = set.mods || [];
+    try { await buildCatalog(); } catch (e) { notice("Some of this setup's mods didn't load. Reload the page to try again.", "warn"); }
+    updateModsButton();
     overrides = new Map(Object.entries(set.overrides)); defs = new Map(Object.entries(set.definitions));
     loaded = { overrides: new Map(overrides), defs: new Map(defs), label: "you opened it" };
     $("blk").value = set.blacklist;
@@ -1195,7 +1319,7 @@ const Account = (() => {
         conflict = true; status("Not saved", true);
         notice('This setup was changed in another tab or on another device since you opened it. ' +
           '<button id="cfLoad">Load that version</button> <button id="cfMine">Keep mine and overwrite it</button>', "warn");
-        $("cfLoad").onclick = async () => { const g = await call("GET", "/api/sets/" + cur.id); if (g.ok) { conflict = false; apply(g.data); notice("Loaded the newer version.", "info"); } };
+        $("cfLoad").onclick = async () => { const g = await call("GET", "/api/sets/" + cur.id); if (g.ok) { conflict = false; await apply(g.data); notice("Loaded the newer version.", "info"); } };
         $("cfMine").onclick = async () => { const g = await call("GET", "/api/sets/" + cur.id); if (g.ok) { cur.version = g.data.version; conflict = false; notice("Saving your version…", "info"); save(); } };
       } else if (r.status === 401) {
         enabled = false; status("Signed out", true);
@@ -1220,8 +1344,9 @@ const Account = (() => {
 
   async function switchTo(id) {
     clearTimeout(timer); await save();
+    status("Loading…");
     const r = await call("GET", "/api/sets/" + id);
-    if (r.ok) apply(r.data); else { alert("Couldn't open that setup."); fillSelect(); }
+    if (r.ok) await apply(r.data); else { alert("Couldn't open that setup."); fillSelect(); }
   }
 
   async function init() {
@@ -1264,14 +1389,14 @@ const Account = (() => {
     const full = await call("GET", "/api/sets/" + pick.id);
     if (!full.ok) { status("Couldn't load your setup", true); return; }
     // Edits made in this browser while signed out (not tied to a saved setup) are offered as a new setup.
-    const strayEdits = draft && !draft.a && localSig !== sig({ overrides: full.data.overrides, definitions: full.data.definitions, blacklist: full.data.blacklist }) && (overrides.size || defs.size);
-    apply(full.data);
+    const strayEdits = draft && !draft.a && localSig !== sig({ overrides: full.data.overrides, definitions: full.data.definitions, blacklist: full.data.blacklist, mods: full.data.mods }) && (overrides.size || defs.size || MODLIST.length);
+    await apply(full.data);
     if (strayEdits) {
       notice('Opened your saved setup <b>' + esc(full.data.name) + '</b>. This browser also had edits made while signed out. ' +
         '<button id="keepLocal">Save them as a new setup</button>', "info");
       $("keepLocal").onclick = async () => {
         const made = await createSet("From this browser " + new Date().toLocaleDateString(), local);
-        if (made) { apply(made); notice("Saved this browser's edits as <b>" + esc(made.name) + "</b>.", "info"); }
+        if (made) { await apply(made); notice("Saved this browser's edits as <b>" + esc(made.name) + "</b>.", "info"); }
       };
     } else if (login === "ok") {
       toast("Signed in as " + me.data.displayName);
@@ -1292,7 +1417,7 @@ const Account = (() => {
     if (!name) return;
     clearTimeout(timer); await save();
     const made = await createSet(name, state());
-    if (made) { apply(made); $("setModal").classList.remove("on"); toast('Created "' + made.name + '"'); }
+    if (made) { await apply(made); $("setModal").classList.remove("on"); toast('Created "' + made.name + '"'); }
   };
   $("setRename").onclick = async () => {
     if (!cur) return;
@@ -1326,32 +1451,27 @@ const Account = (() => {
 // ------------------------------------------------------------ boot
 async function boot() {
   $("rows").innerHTML = '<div class="empty">Loading item list…</div>';
-  try {
-    const r = await fetch("data.json"); DATA = await r.json();
-  } catch (e) { $("rows").innerHTML = '<div class="empty">The item list didn\'t load. Reload the page.</div>'; return; }
-  MODS = DATA.mods; CATNAMES = DATA.catNames;
-  DATA.vanillaCats = new Set();
-  ITEMS = DATA.items.map(a => ({ ft: a[0], name: a[1], dc: a[2], def: a[3], src: a[4], type: a[5], icon: a[6] ?? -1, key: makeKey(a[1], a[0]) }));
-  for (const it of ITEMS) BYFT.set(it.ft, it);
-  const base = DATA.baseline || { overrides: {}, definitions: {} };
-  overrides = new Map(Object.entries(base.overrides)); defs = new Map(Object.entries(base.definitions));
-  loaded = { overrides: new Map(overrides), defs: new Map(defs), label: DATA.baseline ? "the collected files" : "Better Containers' defaults" };
   const d = loadDraft();
+  MODLIST = d && Array.isArray(d.m) ? d.m : [];
+  try { await buildCatalog(); }
+  catch (e) {
+    $("rows").innerHTML = '<div class="empty">The item list didn\'t load. Reload the page in a minute.</div>';
+    return;
+  }
+  updateModsButton();
+  loaded = { overrides: new Map(), defs: new Map(), label: "Better Containers' defaults" };
   if (d && d.o) {
     overrides = new Map(d.o); defs = new Map(d.d); if (typeof d.b === "string") $("blk").value = d.b;
     loaded = { overrides: new Map(d.lo || []), defs: new Map(d.ld || []), label: d.ll || "your last load" };
     blacklist = new Set($("blk").value.split(",").map(s => s.trim().toLowerCase()).filter(s => s && !["none", "off", "false", "-"].includes(s)));
-    notice('Restored your edits from this browser (' + new Date(d.t).toLocaleString() + '). <button id="discard">Start over from the collected files</button>', "info");
+    notice('Restored your edits from this browser (' + new Date(d.t).toLocaleString() + '). <button id="discard">Start over</button>', "info");
     $("discard").onclick = () => { clearDraft(); location.reload(); };
   } else {
-    notice(DATA.baseline
-      ? "Showing the Better Containers files from " + esc(base.from) + ". Load newer .ini files any time with <b>Load .ini files</b> or by dropping them on the page."
-      : "Starting from Better Containers' defaults. To edit your current setup, use <b>Load .ini files</b> or drop CategoryOverrides.ini and CustomCategories.ini on the page.", "info");
+    notice("Showing the base game with Better Containers' defaults. Add your mods with <b>Mods…</b>, and load your current setup with <b>Load .ini files</b> or by dropping CategoryOverrides.ini and CustomCategories.ini on the page.", "info");
   }
   ensureUnknownItems(); refreshAll();
   try { const c = window.claude; downloads = c && c.use ? await c.use("downloads") : null; } catch (e) { downloads = null; }
   await Account.init();
-
 }
 boot();
 </script>

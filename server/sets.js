@@ -2,9 +2,11 @@
 // all reads and writes to the signed-in user's rows. The user id comes from the session only.
 //
 //   GET    /api/sets          list my setups
-//   POST   /api/sets          create one       { name, overrides, definitions, blacklist }
+//   POST   /api/sets          create one       { name, overrides, definitions, blacklist, mods }
 //   GET    /api/sets/:id      read one
-//   PUT    /api/sets/:id      replace contents { name?, overrides, definitions, blacklist, version }
+//   PUT    /api/sets/:id      replace contents { name?, overrides, definitions, blacklist, mods?, version }
+//
+// mods: catalog mod ids in load order (the base game is always included and isn't listed).
 //   DELETE /api/sets/:id      delete one
 //
 // PUT uses optimistic concurrency: the client sends the version it loaded, and gets 409 if another
@@ -13,7 +15,7 @@ import express from "express";
 import { withUser } from "./db.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const LIMITS = { overrides: 60_000, definitions: 5_000, key: 200, name: 80, blacklist: 500 };
+const LIMITS = { overrides: 60_000, definitions: 5_000, key: 200, name: 80, blacklist: 500, mods: 500 };
 // Nothing that would break an .ini line or section header.
 const SAFE = /^[^\r\n\0[\]=]+$/;
 const SAFE_VALUE = /^[^\r\n\0]+$/;
@@ -49,9 +51,26 @@ function cleanBody(body, { partial }) {
     }
     out.blacklist = body.blacklist;
   }
+  if (body.mods !== undefined) {
+    if (!Array.isArray(body.mods) || body.mods.length > LIMITS.mods || !body.mods.every(m => typeof m === "string" && UUID.test(m)) ||
+        new Set(body.mods).size !== body.mods.length) {
+      throw new BadRequest(`mods must be a list of up to ${LIMITS.mods} different mod ids`);
+    }
+    out.mods = body.mods;
+  }
   out.overrides = cleanMap(body.overrides, "overrides", LIMITS.overrides, SAFE);
   out.definitions = cleanMap(body.definitions, "definitions", LIMITS.definitions, SAFE_VALUE);
   return out;
+}
+
+async function writeMods(db, setId, userId, mods) {
+  await db.query("DELETE FROM set_mods WHERE set_id = $1", [setId]);
+  if (!mods.length) return;
+  const known = await db.query("SELECT id FROM mods WHERE id = ANY($1::uuid[]) AND kind = 'workshop'", [mods]);
+  if (known.rowCount !== mods.length) throw new BadRequest("mods contains an id that isn't in the catalog");
+  await db.query(
+    `INSERT INTO set_mods (set_id, user_id, mod_id, position)
+     SELECT $1, $2, m, p::int FROM unnest($3::uuid[]) WITH ORDINALITY AS t(m, p)`, [setId, userId, mods]);
 }
 
 async function writeContents(db, setId, userId, overrides, definitions) {
@@ -77,12 +96,14 @@ async function readSet(db, id) {
   if (!rows[0]) return null;
   const o = await db.query("SELECT item, category FROM overrides WHERE set_id = $1", [id]);
   const d = await db.query("SELECT category_id, display_name FROM custom_categories WHERE set_id = $1", [id]);
+  const m = await db.query("SELECT mod_id FROM set_mods WHERE set_id = $1 ORDER BY position", [id]);
   const s = rows[0];
   return {
     id: s.id, name: s.name, blacklist: s.blacklist, version: s.version,
     createdAt: s.created_at, updatedAt: s.updated_at,
     overrides: Object.fromEntries(o.rows.map(r => [r.item, r.category])),
     definitions: Object.fromEntries(d.rows.map(r => [r.category_id, r.display_name])),
+    mods: m.rows.map(r => r.mod_id),
   };
 }
 
@@ -106,10 +127,11 @@ export function createSetsRouter({ pool, requireUser }) {
     const sets = await withUser(pool, req.user.id, db => db.query(
       `SELECT s.id, s.name, s.version, s.updated_at,
               (SELECT count(*) FROM overrides o WHERE o.set_id = s.id)::int AS override_count,
-              (SELECT count(*) FROM custom_categories c WHERE c.set_id = s.id)::int AS definition_count
+              (SELECT count(*) FROM custom_categories c WHERE c.set_id = s.id)::int AS definition_count,
+              (SELECT count(*) FROM set_mods sm WHERE sm.set_id = s.id)::int AS mod_count
          FROM category_sets s ORDER BY s.updated_at DESC`));
     res.json(sets.rows.map(r => ({ id: r.id, name: r.name, version: r.version, updatedAt: r.updated_at,
-      overrideCount: r.override_count, definitionCount: r.definition_count })));
+      overrideCount: r.override_count, definitionCount: r.definition_count, modCount: r.mod_count })));
   }));
 
   router.post("/", run(async (req, res) => {
@@ -119,6 +141,7 @@ export function createSetsRouter({ pool, requireUser }) {
         "INSERT INTO category_sets (user_id, name, blacklist) VALUES ($1, $2, COALESCE($3, 'Lore')) RETURNING id",
         [req.user.id, b.name, b.blacklist ?? null]);
       await writeContents(db, rows[0].id, req.user.id, b.overrides, b.definitions);
+      await writeMods(db, rows[0].id, req.user.id, b.mods || []);
       return readSet(db, rows[0].id);
     });
     res.status(201).json(set);
@@ -151,6 +174,7 @@ export function createSetsRouter({ pool, requireUser }) {
         return exists.rowCount ? { conflict: exists.rows[0].version } : null;
       }
       await writeContents(db, id, req.user.id, b.overrides, b.definitions);
+      if (b.mods) await writeMods(db, id, req.user.id, b.mods);
       return readSet(db, id);
     });
     if (!result) return res.status(404).json({ error: "not_found" });

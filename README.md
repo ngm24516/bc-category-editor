@@ -23,7 +23,9 @@ Browser ──► Azure Container Apps (one container, one origin)
   **row-level security** (forced, even for the table owner) returns only your rows. Tests prove another
   user can't read, change or delete your data, through the API or with raw SQL.
 - **CSRF:** state-changing requests must come from the site's own origin.
-- Signed out, the editor still works and keeps edits in that browser only.
+- **Catalog:** the base game plus every Workshop mod anyone has imported, shared by all users. Each setup picks
+  which mods it uses; the editor shows the base game plus those mods' newest versions.
+- Signed out, the editor still works and keeps edits (and the chosen mods) in that browser only.
 
 ## Pipeline
 
@@ -60,8 +62,10 @@ npm run lint
 
 | Path | What |
 |---|---|
-| `web/` | The editor page, item list (`data.json`) and icon sheets |
-| `server/` | Express app: `auth.js` (Discord + sessions), `sets.js` (API), `migrate.js`, `app.js` (wiring) |
+| `web/` | The editor page |
+| `seed/vanilla/` | The base game's items and icons, loaded into the catalog on start-up (built by `importer/seed_vanilla.py`) |
+| `importer/` | Python that reads game and Workshop files into catalog data (scripts, translations, Better Containers rules, icons) |
+| `server/` | Express app: `auth.js` (Discord + sessions), `sets.js` (setups API), `catalog.js` (shared item catalog), `migrate.js`, `app.js` (wiring) |
 | `db/migrations/` | SQL migrations, applied in order on start-up (append only; never edit one that has shipped) |
 | `test/` | API tests (real Postgres, fake Discord) |
 | `infra/` | Bicep for all Azure resources |

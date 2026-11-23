@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import compression from "compression";
 import express from "express";
 import { avatarUrl, createAuth } from "./auth.js";
+import { createCatalogRouter } from "./catalog.js";
 import { createSetsRouter } from "./sets.js";
 
 const WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "web");
@@ -49,6 +50,7 @@ export function createApp({ pool, config, fetchImpl }) {
     res.json({ id: u.id, discordId: u.discord_id, username: u.username, displayName: u.display_name || u.username,
       avatarUrl: avatarUrl(u), role: u.role });
   });
+  app.use("/api/catalog", createCatalogRouter({ pool }));
   app.use("/api/sets", createSetsRouter({ pool, requireUser: auth.requireUser }));
   app.use("/api", (_req, res) => res.status(404).json({ error: "not_found" }));
 
