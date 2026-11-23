@@ -19,6 +19,9 @@ sign-in and Postgres, deployed as one container to Azure Container Apps. See REA
   it forever); an update is a new version. Setups choose mods in `set_mods` (user data, RLS).
 - **Importer code (`importer/pzcatalog`) only reads files.** Never execute, `require` or `eval` anything from a mod.
 - Signed out, the editor still works with edits kept in the browser; it needs the API for the item list.
+- **Styles live in `web/src/app.css`** (Tailwind v4, every rule through `@apply` or Tailwind's theme variables).
+  `web/app.css` is generated: never edit or commit it. Tailwind doesn't scan the page (`source(none)`), so a
+  class name in the HTML never turns into a utility by accident.
 - `.ini` output must stay byte-compatible with Better Containers' own writer (`writeIni` in web/index.html).
 
 ## Before opening a pull request

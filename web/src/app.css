@@ -1,0 +1,222 @@
+/* The editor's styles, built with Tailwind CSS v4: `npm run build:css` -> web/app.css.
+   Colours, radii, shadows and type come from Tailwind's design tokens. The page's own class names stay
+   (the script builds rows and dialogs with them); each one is defined here with Tailwind utilities. */
+/* source(none): every style here comes through @apply, so Tailwind doesn't scan the page for class names.
+   Scanning would turn ordinary words in the page ("fixed", "table", "hidden") into utility classes that
+   clash with the page's own class names. */
+@import "tailwindcss" source(none);
+
+@theme {
+  --font-sans: "Albert Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Semantic colours the script also uses inline, mapped onto Tailwind's palette. */
+@layer base {
+  :root {
+    --bg: var(--color-gray-50);
+    --panel: var(--color-white);
+    --ink: var(--color-gray-900);
+    --muted: var(--color-gray-500);
+    --line: var(--color-gray-200);
+    --accent: var(--color-indigo-600);
+    --accent-ink: var(--color-white);
+    --accent-soft: var(--color-indigo-50);
+    --custom: var(--color-amber-700);
+    --custom-soft: var(--color-amber-50);
+    --warn: var(--color-red-700);
+    --warn-soft: var(--color-red-50);
+    --ok: var(--color-emerald-700);
+    --font-body: var(--font-sans);
+    --font-display: var(--font-sans);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: var(--color-gray-950); --panel: var(--color-gray-900); --ink: var(--color-gray-100);
+      --muted: var(--color-gray-400); --line: var(--color-gray-800);
+      --accent: var(--color-indigo-400); --accent-ink: var(--color-gray-950); --accent-soft: color-mix(in oklab, var(--color-indigo-500) 15%, transparent);
+      --custom: var(--color-amber-300); --custom-soft: color-mix(in oklab, var(--color-amber-500) 15%, transparent);
+      --warn: var(--color-red-300); --warn-soft: color-mix(in oklab, var(--color-red-500) 15%, transparent);
+      --ok: var(--color-emerald-300);
+      color-scheme: dark;
+    }
+  }
+
+  html, body { @apply h-full m-0; }
+  body {
+    @apply flex flex-col overflow-hidden font-sans text-sm antialiased;
+    background: var(--bg); color: var(--ink);
+  }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { @apply outline-2 outline-offset-2; outline-color: var(--accent); }
+  a { color: var(--accent); @apply underline-offset-2 hover:underline; }
+}
+
+@layer components {
+  /* Controls */
+  button {
+    @apply cursor-pointer rounded-lg border px-3 py-1.5 font-medium shadow-xs transition-colors;
+    border-color: var(--line); background: var(--panel);
+  }
+  button:hover:not(:disabled) { @apply bg-gray-50 dark:bg-gray-800; }
+  button.primary { @apply border-transparent font-semibold text-white; background: var(--accent); }
+  button.primary:hover:not(:disabled) { @apply bg-indigo-500; }
+  button.danger { color: var(--warn); }
+  button:disabled { @apply cursor-default opacity-45; }
+  input[type="text"], input[type="search"], select {
+    @apply w-full rounded-lg border px-3 py-1.5 shadow-xs transition-colors;
+    border-color: var(--line); background: var(--panel);
+  }
+  input[type="text"]:focus, input[type="search"]:focus, select:focus { @apply outline-none ring-2; --tw-ring-color: color-mix(in oklab, var(--accent) 35%, transparent); border-color: var(--accent); }
+  a.btn {
+    @apply inline-block rounded-lg border px-3 py-1.5 font-medium no-underline shadow-xs transition-colors;
+    color: inherit; border-color: var(--line); background: var(--panel);
+  }
+  a.btn.discord { @apply border-transparent bg-[#5865f2] font-semibold text-white hover:bg-[#4752c4] hover:no-underline; }
+  .mono { @apply font-mono text-xs; }
+  .muted { color: var(--muted); }
+
+  /* Header */
+  header {
+    @apply flex flex-wrap items-center gap-x-5 gap-y-3 border-b px-5 py-3 shadow-xs;
+    border-color: var(--line); background: var(--panel);
+  }
+  h1 { @apply m-0 text-lg font-bold tracking-tight text-balance; }
+  .stats { @apply flex flex-wrap gap-3.5 tabular-nums; color: var(--muted); }
+  .stat b { @apply font-semibold; color: var(--ink); }
+  .chip { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset; }
+  .chip.custom { background: var(--custom-soft); color: var(--custom); --tw-ring-color: color-mix(in oklab, var(--custom) 25%, transparent); }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); --tw-ring-color: color-mix(in oklab, var(--warn) 25%, transparent); }
+  .chip.acc { background: var(--accent-soft); color: var(--accent); --tw-ring-color: color-mix(in oklab, var(--accent) 25%, transparent); }
+  .spacer { @apply flex-1; }
+  .files { @apply flex flex-wrap items-center gap-2; }
+
+  .acct { @apply flex flex-nowrap items-center gap-2 whitespace-nowrap; }
+  .acct[hidden], .acct [hidden] { display: none !important; }
+  .acct img { @apply block size-7 rounded-full ring-2; --tw-ring-color: var(--line); }
+  .acct .who { @apply font-semibold; }
+  .acct select { @apply max-w-40; }
+  .acct .sync { @apply min-w-[10.5em] text-xs; color: var(--muted); }
+  .acct .sync.err { color: var(--warn); }
+
+  .pathbar { @apply flex flex-wrap items-center gap-x-3.5 gap-y-2 border-b px-5 py-2 text-[13px]; border-color: var(--line); color: var(--muted); }
+  .pathbar code { @apply rounded-md border px-1.5 py-0.5 font-mono text-xs; border-color: var(--line); background: var(--panel); color: var(--ink); }
+  .notice { @apply hidden flex-wrap items-center gap-2.5 border-b px-5 py-2 text-[13px]; border-color: var(--line); }
+  .notice.show { @apply flex; }
+  .notice.info { background: var(--accent-soft); }
+  .notice.warn { background: var(--warn-soft); }
+
+  /* Layout: filter rail + item table */
+  main { @apply grid min-h-0 flex-1 grid-cols-[280px_1fr]; }
+  aside { @apply flex flex-col gap-4 overflow-auto border-r p-4; border-color: var(--line); background: var(--panel); }
+  aside label, .flabel { @apply mb-1.5 block text-xs font-semibold tracking-wide uppercase; color: var(--muted); }
+  .seg { @apply grid grid-cols-2 gap-1; }
+  .seg button { @apply px-2 py-1 text-[12.5px] shadow-none; }
+  .seg button.on { @apply font-semibold; background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .tabs { @apply inline-flex gap-1 rounded-lg p-1; background: var(--bg); }
+  .tabs button { @apply border-transparent bg-transparent px-3 py-1 shadow-none; }
+  .tabs button.on { @apply shadow-xs; background: var(--panel); color: var(--ink); border-color: var(--line); }
+  .help { @apply text-[12.5px] leading-relaxed; color: var(--muted); }
+  .help p { @apply mt-0 mb-1.5; }
+
+  section.view { @apply hidden min-h-0 min-w-0 flex-col; }
+  section.view.on { @apply flex; }
+  .bulk { @apply flex flex-wrap items-center gap-2 border-b px-4 py-2 tabular-nums; border-color: var(--line); background: var(--panel); }
+  .thead, .row {
+    @apply grid items-center gap-2.5 px-4;
+    grid-template-columns: 30px 32px minmax(200px, 2.2fr) minmax(120px, 1.1fr) minmax(130px, 1.2fr) minmax(170px, 1.5fr) 64px;
+  }
+  .thead { @apply h-9 border-b text-xs font-semibold tracking-wide uppercase; color: var(--muted); border-color: var(--line); background: var(--bg); }
+  .scroller { @apply relative min-h-0 flex-1 overflow-auto; }
+  .scroller:focus { @apply outline-none; }
+  .rows { @apply relative select-none; }
+  .row { @apply absolute inset-x-0 h-10 border-b transition-colors; border-color: var(--line); }
+  .row:hover { background: color-mix(in oklab, var(--accent-soft) 60%, transparent); }
+  .row.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .row.focus { @apply outline-1 -outline-offset-2 outline-dashed; outline-color: var(--accent); }
+  .row .nm { @apply overflow-hidden; }
+  .row .nm div { @apply truncate; }
+  .row .ft { @apply font-mono text-[11.5px]; color: var(--muted); }
+  .row .cell { @apply truncate text-[13px]; }
+  .ic { @apply size-8 flex-none bg-no-repeat; }
+  .ic.none { @apply m-[3px] size-[26px] rounded-md border border-dashed; border-color: var(--line); }
+  .catbtn { @apply w-full truncate px-2.5 py-1 text-left font-normal shadow-none; }
+  .catbtn.custom { @apply font-semibold; background: var(--custom-soft); border-color: color-mix(in oklab, var(--custom) 40%, transparent); color: var(--custom); }
+  .catbtn.blk { @apply border-dashed; }
+  .empty { @apply p-10 text-center; color: var(--muted); }
+
+  /* Categories view */
+  .cats { @apply flex-1 overflow-auto; }
+  .cats table { @apply w-full border-collapse tabular-nums; }
+  .cats th, .cats td { @apply border-b px-3 py-2 text-left text-[13px]; border-color: var(--line); }
+  .cats th { @apply sticky top-0 text-xs font-semibold tracking-wide uppercase; background: var(--bg); color: var(--muted); }
+  .cats td.num { @apply text-right; }
+  .cats tr:hover td { background: color-mix(in oklab, var(--accent-soft) 60%, transparent); }
+
+  /* Pop-overs: category picker, searchable dropdowns */
+  .picker, .combo .pop {
+    @apply hidden flex-col rounded-xl border shadow-lg ring-1 ring-black/5;
+    border-color: var(--line); background: var(--panel);
+  }
+  .picker { @apply fixed z-20 max-h-[380px] w-[340px]; }
+  .picker.on { @apply flex; }
+  .picker .ph { @apply flex flex-col gap-1.5 border-b p-2; border-color: var(--line); }
+  .picker ul, .combo ul { @apply m-0 list-none overflow-auto p-1; }
+  .picker li, .combo li { @apply flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[13px]; }
+  .picker li { @apply justify-between; }
+  .picker li .lbl { @apply flex min-w-0 items-center gap-2; }
+  .picker li .ic { @apply size-6; }
+  .picker li .mono { color: var(--muted); }
+  .picker li.hi, .picker li:hover, .combo li.hi { background: var(--accent-soft); }
+  .picker li.def { @apply font-semibold; }
+  .combo { @apply relative; }
+  .combo > button { @apply flex w-full items-center gap-2 px-3 py-1.5 text-left font-normal; }
+  .combo > button .cv { @apply min-w-0 flex-1 truncate; }
+  .combo > button .caret { @apply text-[11px]; color: var(--muted); }
+  .combo .pop { @apply absolute inset-x-0 top-[calc(100%+4px)] z-25 max-h-[360px] min-w-60; }
+  .combo.open .pop { @apply flex; }
+  .combo .pop input { @apply m-1.5 w-[calc(100%-12px)]; }
+  .combo li .ic { @apply size-[22px]; }
+  .combo li .n { @apply ml-auto text-xs tabular-nums; color: var(--muted); }
+  .combo li.cur { @apply font-semibold; color: var(--accent); }
+
+  /* Dialogs */
+  .modal { @apply fixed inset-0 z-30 hidden items-center justify-center bg-gray-950/40 p-4 backdrop-blur-[2px]; }
+  .modal.on { @apply flex; }
+  .modal .box {
+    @apply flex max-h-[90%] w-[min(560px,100%)] flex-col gap-3 overflow-auto rounded-2xl p-6 shadow-xl ring-1 ring-black/5;
+    background: var(--panel);
+  }
+  .modal h2 { @apply m-0 text-lg font-bold tracking-tight; }
+  .modal ol { @apply m-0 flex list-decimal flex-col gap-1.5 pl-5; }
+  .modal ol li::marker { color: var(--muted); }
+  .modal p { @apply m-0 leading-relaxed; }
+  .modal .acts { @apply flex flex-wrap justify-end gap-2 pt-1; }
+  .slist { @apply max-h-[46vh] overflow-auto rounded-lg border; border-color: var(--line); }
+  .slist label { @apply grid grid-cols-[22px_28px_1fr_auto] items-center gap-2 border-b px-2 py-1 text-[13px]; border-color: var(--line); }
+  .slist .ic { @apply size-7; }
+  .modlist { @apply m-0 flex max-h-[34vh] list-none flex-col gap-1.5 overflow-auto p-0; }
+  .modlist li { @apply flex items-center gap-2 rounded-lg border px-3 py-2; border-color: var(--line); }
+  .modlist li .nm { @apply min-w-0 flex-1; }
+  .modlist li .nm small { @apply block text-[11.5px]; color: var(--muted); }
+  .modlist li button { @apply px-2 py-0.5; }
+  .modlist .base { background: var(--accent-soft); border-color: transparent; }
+
+  /* Toast and drop target */
+  .toast { @apply fixed bottom-4 left-1/2 z-40 hidden -translate-x-1/2 items-center gap-2.5 rounded-xl bg-gray-900 px-4 py-2.5 text-[13px] text-white shadow-lg; }
+  .toast.on { @apply flex; }
+  .toast button { @apply border-white/40 bg-transparent px-2 py-0.5 text-white shadow-none hover:bg-white/10; }
+  #drop {
+    @apply fixed inset-0 z-50 hidden items-center justify-center border-4 border-dashed text-2xl font-bold;
+    border-color: var(--accent); background: color-mix(in oklab, var(--accent) 15%, transparent); color: var(--ink);
+  }
+  #drop.on { @apply flex; }
+}
+
+@media (max-width: 820px) {
+  main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+  .thead, .row { grid-template-columns: 26px 32px minmax(130px, 2fr) minmax(130px, 1.4fr) 54px; }
+  .col-mod, .col-def { display: none; }
+}
