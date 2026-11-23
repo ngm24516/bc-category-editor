@@ -1,0 +1,83 @@
+# Runs on every pull request (and on main). Branch protection should require both jobs to pass before merging.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, test, migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Create the non-superuser app role and databases
+        run: psql -h localhost -U postgres -f db/init-local.sql
+      - name: Lint
+        run: npm run lint
+      - name: API tests (real Postgres, fake Discord)
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://bc_app:bc_app@localhost:5432/bceditor_test
+      - name: Migrations apply cleanly to an empty database, and a second run is a no-op
+        run: |
+          npm run migrate
+          npm run migrate | tee second-run.txt
+          grep -q "up to date" second-run.txt
+        env:
+          DATABASE_URL: postgres://bc_app:bc_app@localhost:5432/bceditor
+
+  container:
+    name: Build and smoke-test the container
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - run: psql -h localhost -U postgres -f db/init-local.sql
+      - name: Build image
+        run: docker build -t bc-editor:ci .
+      - name: Start it and check it becomes ready
+        run: |
+          docker run -d --name app --network host \
+            -e PUBLIC_URL=http://localhost:3000 \
+            -e DATABASE_URL=postgres://bc_app:bc_app@localhost:5432/bceditor \
+            -e DISCORD_CLIENT_ID=ci -e DISCORD_CLIENT_SECRET=ci \
+            bc-editor:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/readyz; then echo; break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:3000/readyz
+          curl -fsS -o /dev/null http://localhost:3000/
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/me)" = "401"
+      - name: Container logs
+        if: always()
+        run: docker logs app || true

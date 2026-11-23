@@ -1,0 +1,121 @@
+# Every merge to main: build the image once, deploy it to staging, then wait for a human to approve
+# production. The same image (tagged with the commit SHA) is promoted, never rebuilt.
+#
+# Azure sign-in uses OpenID Connect: GitHub proves "this is a job in ngm24516/bc-category-editor running in
+# environment X" and Azure trusts that, so no Azure password or key is stored in GitHub.
+# Until the Azure setup in docs/SETUP-AZURE.md is done (repository variable AZURE_CLIENT_ID is empty),
+# only the image is built and the deploy jobs are skipped.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "image=$repo:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "latest=$repo:main" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ steps.meta.outputs.latest }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  staging:
+    name: Deploy to staging
+    needs: image
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - id: deploy
+        name: Point the staging app at the new image
+        run: |
+          az extension add --name containerapp --upgrade --only-show-errors
+          az containerapp update --name "${{ vars.STAGING_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "${{ needs.image.outputs.image }}" --only-show-errors -o none
+          fqdn=$(az containerapp show --name "${{ vars.STAGING_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "url=https://$fqdn" >> "$GITHUB_OUTPUT"
+      - name: Smoke test (the app also runs database migrations on start)
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS "${{ steps.deploy.outputs.url }}/readyz" && exit 0
+            sleep 10
+          done
+          echo "Staging never became ready" && exit 1
+
+  production:
+    name: Deploy to production
+    needs: [image, staging]
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    # The "production" environment has a required reviewer, so this job waits for approval in GitHub.
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - id: deploy
+        name: Promote the same image to production
+        run: |
+          az extension add --name containerapp --upgrade --only-show-errors
+          az containerapp update --name "${{ vars.PROD_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "${{ needs.image.outputs.image }}" --only-show-errors -o none
+          fqdn=$(az containerapp show --name "${{ vars.PROD_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "url=https://$fqdn" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS "${{ steps.deploy.outputs.url }}/readyz" && exit 0
+            sleep 10
+          done
+          echo "Production never became ready" && exit 1
