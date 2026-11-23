@@ -120,5 +120,8 @@ Open the run, click **Review deployments**, approve, and production goes live at
 
 ## 9. Retire the Static Web App (after production works)
 
-In a follow-up pull request, delete `.github/workflows/azure-static-web-apps-*.yml`, then delete the
-Static Web App resource in the portal.
+Its workflow was removed from the repo. Delete the leftovers once production is live:
+
+1. Portal → **rg-bceditor** → the Static Web App (`bc-editor`) → **Delete**.
+2. GitHub → **Settings** → **Secrets and variables** → **Actions** → delete
+   `AZURE_STATIC_WEB_APPS_API_TOKEN_LEMON_MOSS_0954F4110`.
