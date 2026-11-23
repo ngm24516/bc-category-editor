@@ -115,8 +115,17 @@ export function createImportsRouter({ pool, requireUser, steam }) {
     }
     const kind = children ? "collection" : "mod";
     const head = info.get(id);
-    if (!head || !head.ok) throw new HttpError(404, "not_found", "Steam has no public Workshop item with that number");
-    if (kind === "mod" && head.appId !== PZ_APP_ID) throw new HttpError(400, "not_zomboid", "That Workshop item isn't a Project Zomboid mod");
+    // A collection is only a list: if Steam still gives us its items, each one is checked on its own below,
+    // even when the collection page itself was removed or hidden.
+    if (kind === "mod") {
+      if (head?.removed) {
+        throw new HttpError(410, "removed", "Steam has removed this Workshop item for breaking its rules. If it's a collection, Steam no longer shares its item list: import its mods one by one, or use a copy of the collection.");
+      }
+      if (!head || !head.ok) {
+        throw new HttpError(404, "not_found", "Steam has no public Workshop item with that number (it may be private, friends-only or deleted)");
+      }
+      if (head.appId !== PZ_APP_ID) throw new HttpError(400, "not_zomboid", "That Workshop item isn't a Project Zomboid mod");
+    }
     if (children && children.length > LIMITS.collectionSize) {
       throw new HttpError(400, "too_big", `Collections can have at most ${LIMITS.collectionSize} items`);
     }
@@ -133,7 +142,8 @@ export function createImportsRouter({ pool, requireUser, steam }) {
       const state = await catalogState(db, ids);
       const plan = ids.map(w => {
         const d = info.get(w);
-        if (!d || !d.ok) return { w, title: d?.title || null, skipped: "Not available on Steam (removed, private or hidden)" };
+        if (d?.removed) return { w, title: d.title, skipped: "Removed by Steam for breaking its rules" };
+        if (!d || !d.ok) return { w, title: d?.title || null, skipped: "Not available on Steam (private, friends-only or deleted)" };
         if (d.appId !== PZ_APP_ID) return { w, title: d.title, skipped: "Not a Project Zomboid mod" };
         if (d.size > LIMITS.maxBytes) return { w, title: d.title, skipped: "Larger than 4 GB" };
         const have = state.get(w);
@@ -159,7 +169,7 @@ export function createImportsRouter({ pool, requireUser, steam }) {
       // 5. Record the request: who asked for what.
       const { rows: [q] } = await db.query(
         "INSERT INTO import_requests (user_id, kind, workshop_id, title, new_jobs) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-        [req.user.id, kind, id, head.title, newJobs]);
+        [req.user.id, kind, id, head?.title || null, newJobs]);
       for (const p of plan) {
         await db.query(
           `INSERT INTO import_request_items (request_id, user_id, workshop_id, title, job_id, mod_id, skipped)

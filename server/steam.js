@@ -28,7 +28,8 @@ export function createSteam({ apiBase = "https://api.steampowered.com", fetchImp
     return (await res.json())?.response ?? {};
   }
 
-  // Map of id -> { id, ok, title, appId, updatedAt (Date), size (bytes) } for every id Steam knows.
+  // Map of id -> { id, ok, removed, title, appId, updatedAt (Date), size (bytes) } for every id Steam knows.
+  // removed = Steam took it down for breaking its rules; ok = public and not removed.
   async function details(ids) {
     const out = new Map();
     for (let i = 0; i < ids.length; i += 100) {
@@ -40,6 +41,7 @@ export function createSteam({ apiBase = "https://api.steampowered.com", fetchImp
         out.set(String(d.publishedfileid), {
           id: String(d.publishedfileid),
           ok: d.result === 1 && !d.banned,
+          removed: !!d.banned,
           title: typeof d.title === "string" ? d.title.slice(0, 200) : null,
           appId: Number(d.consumer_app_id || d.creator_app_id || 0),
           updatedAt: d.time_updated ? new Date(Number(d.time_updated) * 1000) : null,

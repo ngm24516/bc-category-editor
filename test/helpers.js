@@ -46,7 +46,7 @@ export async function startHarness({ fetchImpl } = {}) {
       if (req.url === "/ISteamRemoteStorage/GetPublishedFileDetails/v1/") {
         return res.end(JSON.stringify({ response: { result: 1, publishedfiledetails: ids.map(id => {
           const d = STEAM.items.get(id);
-          return d ? { publishedfileid: id, result: 1, consumer_app_id: d.app ?? 108600, title: d.title, time_updated: d.updated ?? 1_790_000_000, file_size: String(d.size ?? 1000) }
+          return d ? { publishedfileid: id, result: 1, consumer_app_id: d.app ?? 108600, title: d.title, time_updated: d.updated ?? 1_790_000_000, file_size: String(d.size ?? 1000), banned: !!d.banned }
                    : { publishedfileid: id, result: 9 };
         }) } }));
       }
