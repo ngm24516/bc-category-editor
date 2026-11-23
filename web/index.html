@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="app.css">
+<script src="account-menu.js"></script>
 </head>
 <body>
 <header>
@@ -16,16 +17,10 @@
   <div class="stats" id="stats"></div>
   <div class="spacer"></div>
   <div class="acct" id="acct" hidden>
-    <a class="btn discord" id="btnLogin" href="/auth/discord/login" hidden>Log in with Discord</a>
-    <span id="acctIn" hidden style="display:contents">
-      <img id="acctAvatar" alt="" hidden>
-      <span class="who" id="acctName"></span>
-      <label class="muted" for="setSel" style="font-size:12px">Setup</label>
-      <select id="setSel" title="Your saved setups"></select>
-      <button id="btnSetMenu" title="New, rename or delete setups" aria-label="Manage setups">⋯</button>
-      <span class="sync" id="syncTxt" role="status"></span>
-      <button id="btnLogout">Log out</button>
-    </span>
+    <label class="muted" for="setSel" style="font-size:12px">Setup</label>
+    <select id="setSel" title="Your saved setups"></select>
+    <button id="btnSetMenu" title="New, rename or delete setups" aria-label="Manage setups">⋯</button>
+    <span class="sync" id="syncTxt" role="status"></span>
   </div>
   <div class="files">
     <input type="file" id="fileIn" accept=".ini,.txt" multiple hidden>
@@ -34,6 +29,7 @@
     <button id="btnLoad">Load .ini files…</button>
     <button id="btnSave" class="primary">Save to game…</button>
   </div>
+  <div class="usermenu" id="userMenu" hidden></div>
 </header>
 <div class="pathbar">
   <span>Better Containers keeps these files in</span>
@@ -1266,9 +1262,8 @@ const Account = (() => {
     try { me = await call("GET", "/api/me"); } catch (e) { return; }
     // No API here (e.g. opened as a plain file or on a static host): stay in browser-only mode.
     if (!(me.status === 200 || (me.status === 401 && me.data && me.data.error === "not_signed_in"))) return;
-    $("acct").hidden = false;
     if (me.status === 401) {
-      $("btnLogin").hidden = false;
+      AccountMenu.mount($("userMenu"), null);
       if (login && login !== "ok") {
         notice({ cancelled: "Discord login was cancelled.", expired: "The login took too long or was started in another tab. Try again.",
           discord: "Discord didn't confirm the login. Try again in a minute." }[login] || "Login didn't work. Try again.", "warn");
@@ -1276,9 +1271,19 @@ const Account = (() => {
       return;
     }
     enabled = true;
-    $("acctIn").hidden = false;
-    $("acctName").textContent = me.data.displayName;
-    if (me.data.avatarUrl) { $("acctAvatar").src = me.data.avatarUrl; $("acctAvatar").hidden = false; }
+    $("acct").hidden = false;
+    AccountMenu.mount($("userMenu"), me.data, {
+      items: [
+        { label: "Your setups…", onClick: () => $("setModal").classList.add("on") },
+        { label: "Mods and imports…", onClick: () => $("btnMods").click() },
+        { label: "Admin dashboard", href: "/admin", show: me.data.role === "admin" },
+      ],
+      onLogout: async () => {
+        clearTimeout(timer); await save();
+        try { localStorage.removeItem(SET_KEY); } catch (e) { /* storage unavailable */ }
+        clearDraft();
+      },
+    });
 
     const local = state(), localSig = sig(local), draft = loadDraft();
     const list = await call("GET", "/api/sets");
@@ -1314,12 +1319,6 @@ const Account = (() => {
   }
 
   $("setSel").onchange = e => switchTo(e.target.value);
-  $("btnLogout").onclick = async () => {
-    clearTimeout(timer); await save();
-    await call("POST", "/auth/logout").catch(() => {});
-    try { localStorage.removeItem(SET_KEY); } catch (e) { /* storage unavailable */ }
-    clearDraft(); location.reload();
-  };
   $("btnSetMenu").onclick = () => $("setModal").classList.add("on");
   $("setClose").onclick = () => $("setModal").classList.remove("on");
   $("setNew").onclick = async () => {
@@ -1356,7 +1355,7 @@ const Account = (() => {
   });
 
   return { init, scheduleSave, currentId: () => (enabled && cur ? cur.id : null),
-    signedIn: () => enabled, available: () => !$("acct").hidden };
+    signedIn: () => enabled, available: () => !$("userMenu").hidden };
 })();
 
 // ------------------------------------------------------------ boot

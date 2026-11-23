@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Admin dashboard · Better Containers Category Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+<script src="account-menu.js"></script>
+</head>
+<body class="admin">
+<header>
+  <h1>Admin dashboard</h1>
+  <a class="back" href="/">← Back to the editor</a>
+  <div class="spacer"></div>
+  <span class="muted-note" id="updated" role="status"></span>
+  <button id="btnRefresh">Refresh</button>
+  <div class="usermenu" id="userMenu" hidden></div>
+</header>
+<main class="dash" id="dash">
+  <p class="muted">Loading…</p>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const fmtTime = t => t ? new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+function ago(t, now = Date.now()) {
+  if (!t) return "—";
+  const s = Math.max(0, Math.round((now - new Date(t)) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+function until(t) {
+  const s = Math.max(0, Math.round((new Date(t) - Date.now()) / 1000));
+  return s < 60 ? `in ${s}s` : `in ${Math.floor(s / 60)}m ${s % 60}s`;
+}
+const dur = s => s == null ? "—" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+const REASON = { request: "Requested", collection: "From a collection", update: "Update check" };
+const badge = st => {
+  const map = { queued: ["queued", "Queued"], running: ["running", "Running"], done: ["ready", "Done"], succeeded: ["ready", "Succeeded"], failed: ["failed", "Failed"] };
+  const [cls, label] = map[st] || ["skipped", st];
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+};
+const modCell = j => {
+  const name = j.modName || j.title || `Workshop item ${j.workshopId}`;
+  const href = `https://steamcommunity.com/sharedfiles/filedetails/?id=${encodeURIComponent(j.workshopId)}`;
+  return `<a href="${href}" target="_blank" rel="noopener">${esc(name)}</a><span class="sub">${esc(j.workshopId)}</span>`;
+};
+
+let data = null, timer = null, openLogs = new Set();
+
+async function getJson(url, opts) {
+  const r = await fetch(url, { credentials: "same-origin", ...opts });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw Object.assign(new Error(e.message || `Request failed (${r.status})`), { status: r.status });
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+function message(html) {
+  $("dash").innerHTML = `<div class="panel"><div class="empty">${html}</div></div>`;
+  $("btnRefresh").hidden = true;
+}
+
+function render() {
+  const d = data, c = d.counts, imp = d.schedule.importer, upd = d.schedule.updates;
+  const card = (k, v, cls = "") => `<div class="card ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const lastRun = r => r ? `${badge(r.status)} ${esc(fmtTime(r.startedAt))} · ${esc(ago(r.startedAt))}${r.seconds != null ? ` · took ${dur(r.seconds)}` : ""}` : "Hasn't run yet";
+
+  const queueRows = d.queue.map(j => `<tr>
+      <td>${modCell(j)}</td><td>${esc(REASON[j.reason] || j.reason)}</td><td>${esc(j.requestedBy || "Scheduled check")}</td>
+      <td>${badge(j.status)}</td><td>${esc(ago(j.createdAt))}<span class="sub">${esc(fmtTime(j.createdAt))}</span></td>
+      <td>${j.startedAt ? esc(ago(j.startedAt)) : "—"}</td></tr>`).join("");
+
+  const recentRows = d.recent.map(j => `<tr>
+      <td>${esc(fmtTime(j.finishedAt))}<span class="sub">${esc(ago(j.finishedAt))}</span></td>
+      <td>${modCell(j)}</td><td>${esc(REASON[j.reason] || j.reason)}</td><td>${esc(j.requestedBy || "Scheduled check")}</td>
+      <td>${badge(j.status)}</td><td>${dur(j.seconds)}</td><td class="err">${esc(j.error || "")}</td>
+      <td class="acts">${j.hasLog ? `<button data-log="${j.id}" aria-expanded="${openLogs.has(j.id)}">${openLogs.has(j.id) ? "Hide log" : "Log"}</button>` : ""}
+        ${j.status === "failed" ? `<button data-retry="${j.id}">Retry</button>` : ""}</td></tr>
+      ${openLogs.has(j.id) ? `<tr class="logrow"><td colspan="8"><pre id="log-${j.id}">Loading…</pre></td></tr>` : ""}`).join("");
+
+  const runRows = d.runs.map(r => `<tr>
+      <td>${esc(fmtTime(r.startedAt))}<span class="sub">${esc(ago(r.startedAt))}</span></td>
+      <td>${r.kind === "import" ? "Import" : "Update check"}</td><td>${badge(r.status)}</td><td>${dur(r.seconds)}</td>
+      <td>${r.processed}</td><td>${r.succeeded}</td><td>${r.failed}</td><td class="err">${esc(r.error || "")}</td></tr>`).join("");
+
+  $("dash").innerHTML = `
+    ${imp.stalled ? `<div class="alert" role="alert"><b>The importer hasn't picked up queued work.</b> The oldest queued import has waited more than ${imp.pollSeconds * 4} seconds with nothing running. Check the importer job's executions and logs in Azure.</div>` : ""}
+    <section class="cards" aria-label="Totals">
+      ${card("Queued", c.queued)}${card("Running", c.running)}
+      ${card("Imported (24h)", c.done24, c.done24 ? "good" : "")}${card("Failed (24h)", c.failed24, c.failed24 ? "bad" : "")}
+      ${card("Mods", c.mods)}${card("Versions", c.versions)}${card("Users", c.users)}
+    </section>
+    <section class="sched" aria-label="Schedule">
+      <div class="card">
+        <h3>Importer</h3>
+        <p class="when">${c.running ? "Running now" : c.queued ? (imp.stalled ? "Waiting to start" : "Starting soon") : "Idle — starts when an import is queued"}</p>
+        <p>Checks the queue every ${imp.pollSeconds} seconds and runs while there is work.</p>
+        <p>Last run: ${lastRun(imp.lastRun)}</p>
+      </div>
+      <div class="card">
+        <h3>Update check</h3>
+        <p class="when" id="nextRun">${esc(fmtTime(upd.nextRun))} · ${esc(until(upd.nextRun))}</p>
+        <p>Every hour at :${esc(upd.cron.split(" ")[0].padStart(2, "0"))} UTC (<code>${esc(upd.cron)}</code>). Queues any mod whose Workshop copy changed.</p>
+        <p>Last run: ${lastRun(upd.lastRun)}</p>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Queue <span class="n">${d.queue.length}</span></h2>
+      ${d.queue.length ? `<table class="grid"><thead><tr><th>Mod</th><th>Reason</th><th>Requested by</th><th>Status</th><th>Queued</th><th>Started</th></tr></thead><tbody>${queueRows}</tbody></table>`
+        : `<p class="empty muted">Nothing is waiting.</p>`}
+    </section>
+    <section class="panel">
+      <h2>Recent imports <span class="n">${d.recent.length}</span></h2>
+      ${d.recent.length ? `<table class="grid"><thead><tr><th>Finished</th><th>Mod</th><th>Reason</th><th>Requested by</th><th>Result</th><th>Took</th><th>Error</th><th></th></tr></thead><tbody>${recentRows}</tbody></table>`
+        : `<p class="empty muted">No imports have finished yet.</p>`}
+    </section>
+    <section class="panel">
+      <h2>Importer runs <span class="n">${d.runs.length}</span></h2>
+      ${d.runs.length ? `<table class="grid"><thead><tr><th>Started</th><th>Kind</th><th>Result</th><th>Took</th><th>Processed</th><th>Succeeded</th><th>Failed</th><th>Error</th></tr></thead><tbody>${runRows}</tbody></table>`
+        : `<p class="empty muted">No runs recorded yet. Runs appear once the importer or the update check has started.</p>`}
+    </section>`;
+  for (const id of openLogs) loadLog(id);
+  $("updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+}
+
+const logCache = new Map();
+async function loadLog(id) {
+  const pre = $(`log-${id}`);
+  if (!pre) return;
+  try {
+    if (!logCache.has(id)) logCache.set(id, (await getJson(`/api/admin/jobs/${id}/log`)).log || "(empty)");
+    pre.textContent = logCache.get(id);
+  } catch (e) { pre.textContent = e.message; }
+}
+
+async function refresh() {
+  try {
+    data = await getJson("/api/admin/overview");
+    render();
+  } catch (e) {
+    if (e.status === 401) return message(`Sign in to see the dashboard. Use <b>Log in with Discord</b> at the top right, then come back here.`);
+    if (e.status === 403) return message("Admins only. Your account doesn't have access to this page.");
+    $("updated").textContent = `Couldn't refresh: ${e.message}`;
+    return;
+  }
+  clearTimeout(timer);
+  timer = setTimeout(refresh, 10000);
+}
+
+$("dash").addEventListener("click", async ev => {
+  const logBtn = ev.target.closest("[data-log]"), retryBtn = ev.target.closest("[data-retry]");
+  if (logBtn) {
+    const id = Number(logBtn.dataset.log);
+    openLogs.has(id) ? openLogs.delete(id) : openLogs.add(id);
+    render();
+  } else if (retryBtn) {
+    retryBtn.disabled = true;
+    try {
+      await getJson(`/api/admin/jobs/${retryBtn.dataset.retry}/retry`, { method: "POST" });
+      logCache.delete(Number(retryBtn.dataset.retry));
+      openLogs.delete(Number(retryBtn.dataset.retry));
+      await refresh();
+    } catch (e) { retryBtn.disabled = false; $("updated").textContent = e.message; }
+  }
+});
+$("btnRefresh").addEventListener("click", refresh);
+setInterval(() => { if (data && $("nextRun")) $("nextRun").textContent = `${fmtTime(data.schedule.updates.nextRun)} · ${until(data.schedule.updates.nextRun)}`; }, 1000);
+
+(async () => {
+  let me = null;
+  try { me = await getJson("/api/me"); } catch { /* signed out or API down */ }
+  AccountMenu.mount($("userMenu"), me, { items: [{ label: "Category editor", href: "/" }] });
+  refresh();
+})();
+</script>
+</body>
+</html>

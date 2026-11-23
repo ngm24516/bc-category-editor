@@ -38,8 +38,13 @@ STALE_AFTER = "2 hours"                # a 'running' job this old belongs to a w
 MAX_ATTEMPTS = 3
 
 
+JOB_LOG = []   # lines logged while a job is being processed; saved on the job for the admin dashboard
+
+
 def log(msg):
-    print(f"{datetime.now(timezone.utc):%H:%M:%S} {msg}", flush=True)
+    line = f"{datetime.now(timezone.utc):%H:%M:%S} {msg}"
+    print(line, flush=True)
+    JOB_LOG.append(line)
 
 
 # ------------------------------------------------------------------ Steam
@@ -104,14 +109,14 @@ def Jsonb(value):  # noqa: N802 - imported lazily so the file-reading tests don'
     return _Jsonb(value)
 
 
-def claim(conn):
+def claim(conn, run_id=None):
     """Take the oldest queued job. SKIP LOCKED lets several workers run without taking the same job."""
     with conn.cursor() as cur:
         cur.execute("""
-            UPDATE import_jobs SET status = 'running', started_at = now(), attempts = attempts + 1
+            UPDATE import_jobs SET status = 'running', started_at = now(), attempts = attempts + 1, run_id = %s
              WHERE id = (SELECT id FROM import_jobs WHERE status = 'queued'
                           ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
-            RETURNING id, workshop_id, reason, requested_by, source_updated_at, title, attempts""")
+            RETURNING id, workshop_id, reason, requested_by, source_updated_at, title, attempts""", (run_id,))
         row = cur.fetchone()
     conn.commit()
     if not row:
@@ -175,9 +180,28 @@ def write_version(conn, job, title, mod_ids, updated, layer):
 
 
 def finish(conn, job_id, status, mod_id=None, version_id=None, error=None):
+    text = "\n".join(JOB_LOG)[-6000:]
     with conn.cursor() as cur:
-        cur.execute("""UPDATE import_jobs SET status = %s, mod_id = %s, version_id = %s, error = %s, finished_at = now()
-                        WHERE id = %s""", (status, mod_id, version_id, error[:500] if error else None, job_id))
+        cur.execute("""UPDATE import_jobs SET status = %s, mod_id = %s, version_id = %s, error = %s, finished_at = now(),
+                              log = %s
+                        WHERE id = %s""", (status, mod_id, version_id, error[:500] if error else None, text, job_id))
+    conn.commit()
+
+
+def start_run(conn, kind):
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO importer_runs (kind) VALUES (%s) RETURNING id", (kind,))
+        run_id = cur.fetchone()[0]
+    conn.commit()
+    return run_id
+
+
+def end_run(conn, run_id, processed, succeeded, failed, error=None):
+    conn.rollback()  # whatever was in flight when it failed
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE importer_runs SET status = %s, finished_at = now(), processed = %s, succeeded = %s,
+                              failed = %s, error = %s WHERE id = %s""",
+                    ("failed" if error else "succeeded", processed, succeeded, failed, error[:500] if error else None, run_id))
     conn.commit()
 
 
@@ -211,15 +235,18 @@ def process(conn, job, rules, props, work_dir):
         title = info.get("title") or job["title"] or mods[0]["name"]
         mod_id, version_id = write_version(conn, job, title, [m["id"] for m in mods], info.get("updated"), layer)
         conn.commit()
-        finish(conn, job["id"], "done", mod_id, version_id)
         log(f"Imported {ws} '{title}': {len(layer['items'])} items, {len(layer['sheets'])} icon sheet(s)")
+        finish(conn, job["id"], "done", mod_id, version_id)
+        return True
     except Exception as err:  # noqa: BLE001 - every failure is recorded on the job, never lost
         conn.rollback()
         msg = str(err) if isinstance(err, RuntimeError) else "The importer couldn't read this mod's files"
         log(f"Failed {ws}: {err}")
         if not isinstance(err, RuntimeError):
-            traceback.print_exc()
+            for line in traceback.format_exc().strip().splitlines()[-6:]:
+                log(line)
         finish(conn, job["id"], "failed", error=msg)
+        return False
     finally:
         shutil.rmtree(item_dir, ignore_errors=True)
 
@@ -229,44 +256,64 @@ def cmd_run():
     os.makedirs(work_dir, exist_ok=True)
     max_jobs = int(os.environ.get("MAX_JOBS", "20"))
     with connect() as conn:
-        recover_stale(conn)
-        rules, props, done = Rules(work_dir), None, 0
-        while done < max_jobs:
-            job = claim(conn)
-            if not job:
-                break
-            if props is None:
-                props = base_props(conn)
-            log(f"Job {job['id']}: {job['reason']} {job['workshop_id']} ({job['title'] or 'untitled'})")
-            process(conn, job, rules, props, work_dir)
-            done += 1
-    log(f"Processed {done} job(s)")
+        run_id = start_run(conn, "import")
+        done = ok = 0
+        try:
+            recover_stale(conn)
+            rules, props = Rules(work_dir), None
+            while done < max_jobs:
+                job = claim(conn, run_id)
+                if not job:
+                    break
+                JOB_LOG.clear()
+                log(f"Job {job['id']}: {job['reason']} {job['workshop_id']} ({job['title'] or 'untitled'}), attempt {job['attempts']}")
+                if props is None:
+                    props = base_props(conn)
+                ok += process(conn, job, rules, props, work_dir)
+                done += 1
+        except Exception as err:
+            end_run(conn, run_id, done, ok, done - ok, error=str(err) or type(err).__name__)
+            raise
+        end_run(conn, run_id, done, ok, done - ok)
+    JOB_LOG.clear()
+    log(f"Processed {done} job(s), {ok} imported, {done - ok} failed")
     return done
 
 
 def cmd_check_updates():
     """Queue a new import for every catalog mod Steam says has changed since its newest version."""
     with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""SELECT m.workshop_id, max(v.source_updated_at) FROM mods m
-                             JOIN mod_versions v ON v.mod_id = m.id
-                            WHERE m.kind = 'workshop' GROUP BY m.workshop_id""")
-            have = dict(cur.fetchall())
-        if not have:
-            log("No Workshop mods in the catalog yet")
-            return 0
-        info = steam_details(list(have))
-        queued = 0
-        with conn.cursor() as cur:
-            for ws, latest in have.items():
-                d = info.get(ws)
-                if d and d["ok"] and d["updated"] and (latest is None or d["updated"] > latest):
-                    cur.execute("""INSERT INTO import_jobs (workshop_id, reason, source_updated_at, title)
-                                   VALUES (%s, 'update', %s, %s)
-                                   ON CONFLICT (workshop_id) WHERE status IN ('queued', 'running') DO NOTHING""",
-                                (ws, d["updated"], d["title"]))
-                    queued += cur.rowcount
-        conn.commit()
+        run_id = start_run(conn, "check-updates")
+        try:
+            return _check_updates(conn, run_id)
+        except Exception as err:
+            end_run(conn, run_id, 0, 0, 0, error=str(err) or type(err).__name__)
+            raise
+
+
+def _check_updates(conn, run_id):
+    with conn.cursor() as cur:
+        cur.execute("""SELECT m.workshop_id, max(v.source_updated_at) FROM mods m
+                         JOIN mod_versions v ON v.mod_id = m.id
+                        WHERE m.kind = 'workshop' GROUP BY m.workshop_id""")
+        have = dict(cur.fetchall())
+    if not have:
+        log("No Workshop mods in the catalog yet")
+        end_run(conn, run_id, 0, 0, 0)
+        return 0
+    info = steam_details(list(have))
+    queued = 0
+    with conn.cursor() as cur:
+        for ws, latest in have.items():
+            d = info.get(ws)
+            if d and d["ok"] and d["updated"] and (latest is None or d["updated"] > latest):
+                cur.execute("""INSERT INTO import_jobs (workshop_id, reason, source_updated_at, title)
+                               VALUES (%s, 'update', %s, %s)
+                               ON CONFLICT (workshop_id) WHERE status IN ('queued', 'running') DO NOTHING""",
+                            (ws, d["updated"], d["title"]))
+                queued += cur.rowcount
+    conn.commit()
+    end_run(conn, run_id, len(have), queued, 0)
     log(f"Checked {len(have)} mod(s); queued {queued} update(s)")
     return queued
 

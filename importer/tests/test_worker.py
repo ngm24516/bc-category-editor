@@ -158,6 +158,22 @@ class WorkerTests(unittest.TestCase):
         worker.cmd_run()
         self.assertEqual(self.one("SELECT count(*) FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE m.kind = 'workshop'")[0], 2)
 
+    def test_each_run_and_each_jobs_log_are_recorded(self):
+        import worker
+        self.queue("2200148440")
+        self.queue("3000000009")
+        worker.cmd_run()
+        run = self.one("SELECT kind, status, processed, succeeded, failed, finished_at IS NOT NULL FROM importer_runs")
+        self.assertEqual(run, ("import", "succeeded", 2, 1, 1, True))
+        ok_log, bad_log = (self.one("SELECT log FROM import_jobs WHERE workshop_id = %s", w)[0] for w in ("2200148440", "3000000009"))
+        self.assertIn("Imported 2200148440", ok_log)
+        self.assertIn("No Build 42 mod", bad_log)
+        self.assertNotIn("2200148440", bad_log, "each job keeps only its own lines")
+        self.assertEqual(self.one("SELECT count(*) FROM import_jobs WHERE run_id IS NOT NULL")[0], 2)
+        worker.cmd_check_updates()
+        self.assertEqual(self.one("SELECT kind, status, processed FROM importer_runs ORDER BY id DESC LIMIT 1"),
+                         ("check-updates", "succeeded", 1))
+
     def test_jobs_left_running_by_a_dead_worker_are_retried(self):
         import worker
         self.queue("2200148440")

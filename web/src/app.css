@@ -94,8 +94,6 @@
 
   .acct { @apply flex flex-nowrap items-center gap-2 whitespace-nowrap; }
   .acct[hidden], .acct [hidden] { display: none !important; }
-  .acct img { @apply block size-7 rounded-full ring-2; --tw-ring-color: var(--line); }
-  .acct .who { @apply font-semibold; }
   .acct select { @apply max-w-40; }
   .acct .sync { @apply min-w-[10.5em] text-xs; color: var(--muted); }
   .acct .sync.err { color: var(--warn); }
@@ -237,4 +235,63 @@
   .badge.ready { @apply bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-400/10 dark:text-emerald-300; }
   .badge.failed { @apply bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-400/10 dark:text-red-300; }
   .badge.skipped { @apply bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-400/10 dark:text-amber-300; }
+}
+
+@layer components {
+  /* Account menu (web/account-menu.js) */
+  .usermenu { @apply relative ml-auto; }
+  .usermenu[hidden] { display: none !important; }
+  .avatar { @apply block shrink-0 rounded-full object-cover ring-2; --tw-ring-color: var(--line); }
+  .avatar.initials { @apply inline-flex items-center justify-center text-xs font-bold text-white bg-indigo-600; }
+  .avatar-btn { @apply flex items-center gap-1.5 rounded-full border-transparent bg-transparent p-0.5 pr-2 shadow-none; }
+  .avatar-btn:hover:not(:disabled) { background: var(--bg); }
+  .avatar-btn[aria-expanded="true"] .avatar { --tw-ring-color: var(--accent); }
+  .avatar-btn .caret { @apply text-[10px]; color: var(--muted); }
+  .usermenu .menu {
+    @apply absolute right-0 top-[calc(100%+6px)] z-30 flex w-64 flex-col rounded-xl border p-1.5 shadow-lg ring-1 ring-black/5;
+    border-color: var(--line); background: var(--panel);
+  }
+  .usermenu .menu[hidden] { display: none; }
+  .menu-head { @apply mb-1 flex items-center gap-3 border-b px-2 pt-1.5 pb-3; border-color: var(--line); }
+  .menu-head .who { @apply flex min-w-0 flex-col; }
+  .menu-head .who b { @apply truncate font-semibold; }
+  .menu-head .who span { @apply flex items-center gap-1.5 truncate text-xs; color: var(--muted); }
+  .usermenu .menu [role="menuitem"] {
+    @apply w-full rounded-md border-0 bg-transparent px-2.5 py-2 text-left text-sm font-normal no-underline shadow-none;
+    color: var(--ink);
+  }
+  .usermenu .menu [role="menuitem"]:hover, .usermenu .menu [role="menuitem"]:focus-visible { @apply outline-none; background: var(--accent-soft); }
+  .menu-sep { @apply my-1 h-px; background: var(--line); }
+
+  /* Admin dashboard (web/admin.html) */
+  body.admin { @apply overflow-auto; }
+  .admin main.dash { @apply mx-auto flex w-full max-w-7xl flex-col gap-6 p-6; display: flex; }
+  .admin main.dash > * { @apply shrink-0; }
+  .admin header .back { @apply text-sm font-medium; }
+  .cards { @apply grid gap-3; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .card { @apply rounded-xl border p-4 shadow-xs; border-color: var(--line); background: var(--panel); }
+  .card .k { @apply text-xs font-semibold tracking-wide uppercase; color: var(--muted); }
+  .card .v { @apply mt-1 text-2xl font-bold tabular-nums; }
+  .card.bad .v { color: var(--warn); }
+  .card.good .v { color: var(--ok); }
+  .sched { @apply grid gap-3 md:grid-cols-2; }
+  .sched .card h3 { @apply m-0 mb-1 text-sm font-semibold; }
+  .sched .card p { @apply m-0 text-sm leading-relaxed; color: var(--muted); }
+  .sched .card .when { @apply text-base font-semibold; color: var(--ink); }
+  .panel { @apply overflow-hidden rounded-xl border shadow-xs; border-color: var(--line); background: var(--panel); }
+  .panel > h2 { @apply m-0 flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold; border-color: var(--line); }
+  .panel > h2 .n { @apply rounded-full px-2 py-0.5 text-xs; background: var(--bg); color: var(--muted); }
+  .panel .empty { @apply p-6 text-sm; }
+  table.grid { @apply w-full border-collapse text-[13px] tabular-nums; }
+  table.grid th { @apply border-b px-4 py-2 text-left text-xs font-semibold tracking-wide uppercase; border-color: var(--line); color: var(--muted); background: var(--bg); }
+  table.grid td { @apply border-b px-4 py-2.5 align-top; border-color: var(--line); }
+  table.grid tr:last-child td { @apply border-b-0; }
+  table.grid td .sub { @apply block text-xs; color: var(--muted); }
+  table.grid td.err { @apply max-w-80; color: var(--warn); }
+  table.grid td.acts { @apply text-right whitespace-nowrap; }
+  table.grid td.acts button { @apply px-2 py-0.5 text-xs; }
+  tr.logrow td { @apply p-0; background: var(--bg); }
+  tr.logrow pre { @apply m-0 max-h-72 overflow-auto px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap; }
+  .alert { @apply rounded-lg border px-4 py-3 text-sm; border-color: color-mix(in oklab, var(--warn) 30%, transparent); background: var(--warn-soft); color: var(--warn); }
+  .muted-note { @apply text-xs; color: var(--muted); }
 }
