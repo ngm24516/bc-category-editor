@@ -22,12 +22,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the importer image
         run: docker build -f Dockerfile.importer -t importer:ci .
-      - name: Docker version on this runner
-        run: docker version --format 'Docker Engine {{.Server.Version}}'
       - name: Download Better Containers and read its rule files
         run: |
-          if docker run --rm importer:ci smoke; then exit 0; fi
-          echo "::warning::SteamCMD failed under the default seccomp profile; retrying with it relaxed to tell an image problem from a runner one"
-          docker run --rm --security-opt seccomp=unconfined importer:ci smoke
-          echo "::error::SteamCMD works only with seccomp relaxed: the runner's Docker Engine blocks its 32-bit network calls (Docker 29.4.2 did). The image itself is fine."
-          exit 1
+          engine=$(docker version --format '{{.Server.Version}}')
+          echo "Docker Engine $engine"
+          if [ "$engine" = "29.4.2" ]; then
+            # Docker 29.4.2's default seccomp profile blocks 32-bit network calls, so SteamCMD thinks it's offline.
+            # Fixed in 29.4.3. Azure Container Apps doesn't run this Docker release, so only this test needs it.
+            echo "::warning::Runner has Docker 29.4.2 (blocks SteamCMD's 32-bit network calls); running with seccomp relaxed"
+            docker run --rm --security-opt seccomp=unconfined importer:ci smoke
+          else
+            docker run --rm importer:ci smoke
+          fi
