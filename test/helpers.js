@@ -26,13 +26,19 @@ function cookiesFrom(res) {
 }
 
 // Fake Steam: tests put Workshop items and collections here.
-export const STEAM = { items: new Map(), collections: new Map(), down: false };
+// pages: collection id -> the HTML of its public page (used when the API hides a removed collection).
+export const STEAM = { items: new Map(), collections: new Map(), pages: new Map(), down: false };
 
 export async function startHarness({ fetchImpl } = {}) {
   const steamServer = http.createServer((req, res) => {
     let body = "";
     req.on("data", c => { body += c; });
     req.on("end", () => {
+      if (req.method === "GET" && req.url.startsWith("/sharedfiles/filedetails/")) {
+        const page = STEAM.down ? null : STEAM.pages.get(new URL(req.url, "http://x").searchParams.get("id"));
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.end(page ?? "<html><title>Steam Community :: Error</title><body>There was a problem accessing the item.</body></html>");
+      }
       res.setHeader("Content-Type", "application/json");
       if (STEAM.down) { res.statusCode = 503; return res.end("{}"); }
       const p = new URLSearchParams(body);
@@ -92,7 +98,7 @@ export async function startHarness({ fetchImpl } = {}) {
     DISCORD_CLIENT_ID: "test-client", DISCORD_CLIENT_SECRET: "test-secret",
     DISCORD_API_BASE: discordUrl + "/api", DISCORD_AUTHORIZE_URL: discordUrl + "/oauth2/authorize",
     ADMIN_DISCORD_IDS: "100000000000000099",
-    STEAM_API_BASE: steamUrl,
+    STEAM_API_BASE: steamUrl, STEAM_COMMUNITY_BASE: steamUrl,
   });
   const app = createApp({ pool, config, fetchImpl });
   server.on("request", app);

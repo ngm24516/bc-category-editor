@@ -56,7 +56,7 @@ export function createApp({ pool, config, fetchImpl }) {
   app.use("/api/catalog", createCatalogRouter({ pool }));
   app.use("/api/sets", createSetsRouter({ pool, requireUser: auth.requireUser }));
   app.use("/api/admin", createAdminRouter({ pool, requireUser: auth.requireUser, config }));
-  const steam = createSteam({ apiBase: config.steamApiBase, ...(fetchImpl ? { fetchImpl } : {}) });
+  const steam = createSteam({ apiBase: config.steamApiBase, communityBase: config.steamCommunityBase, ...(fetchImpl ? { fetchImpl } : {}) });
   app.use("/api", createImportsRouter({ pool, requireUser: auth.requireUser, steam }));
   app.use("/api", (_req, res) => res.status(404).json({ error: "not_found" }));
 

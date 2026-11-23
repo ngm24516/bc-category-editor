@@ -105,7 +105,7 @@ export function createImportsRouter({ pool, requireUser, steam }) {
     const exempt = req.user.role === "admin";
 
     // 1. Ask Steam what this is.
-    let children, info;
+    let children, info, pageTitle = null;
     try {
       children = await steam.collectionChildren(id);
       info = await steam.details(children ? [id, ...children.slice(0, LIMITS.collectionSize)] : [id]);
@@ -113,13 +113,26 @@ export function createImportsRouter({ pool, requireUser, steam }) {
       console.warn("Steam lookup failed:", err.message);
       throw new HttpError(502, "steam_unavailable", "Steam didn't answer. Try again in a minute.");
     }
+    // Steam's API hides the items of a collection it has removed; its public page may still list them.
+    if (!children && !info.get(id)?.ok) {
+      let fromPage = null;
+      try { fromPage = await steam.collectionFromPage(id); } catch (err) { console.warn("Steam page read failed:", err.message); }
+      if (fromPage) {
+        children = fromPage.ids;
+        pageTitle = fromPage.title;
+        try { info = await steam.details([id, ...children.slice(0, LIMITS.collectionSize)]); } catch (err) {
+          console.warn("Steam lookup failed:", err.message);
+          throw new HttpError(502, "steam_unavailable", "Steam didn't answer. Try again in a minute.");
+        }
+      }
+    }
     const kind = children ? "collection" : "mod";
     const head = info.get(id);
     // A collection is only a list: if Steam still gives us its items, each one is checked on its own below,
     // even when the collection page itself was removed or hidden.
     if (kind === "mod") {
       if (head?.removed) {
-        throw new HttpError(410, "removed", "Steam has removed this Workshop item for breaking its rules. If it's a collection, Steam no longer shares its item list: import its mods one by one, or use a copy of the collection.");
+        throw new HttpError(410, "removed", "Steam has removed this Workshop item for breaking its rules, so it can't be imported. If it was a collection, its page no longer lists its mods: import them one by one, or use a copy of the collection.");
       }
       if (!head || !head.ok) {
         throw new HttpError(404, "not_found", "Steam has no public Workshop item with that number (it may be private, friends-only or deleted)");
@@ -169,7 +182,7 @@ export function createImportsRouter({ pool, requireUser, steam }) {
       // 5. Record the request: who asked for what.
       const { rows: [q] } = await db.query(
         "INSERT INTO import_requests (user_id, kind, workshop_id, title, new_jobs) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-        [req.user.id, kind, id, head?.title || null, newJobs]);
+        [req.user.id, kind, id, head?.title || pageTitle, newJobs]);
       for (const p of plan) {
         await db.query(
           `INSERT INTO import_request_items (request_id, user_id, workshop_id, title, job_id, mod_id, skipped)
