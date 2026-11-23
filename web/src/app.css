@@ -93,7 +93,7 @@
   .files { @apply flex flex-wrap items-center gap-2; }
 
   .acct { @apply flex flex-nowrap items-center gap-2 whitespace-nowrap; }
-  .acct[hidden], .acct [hidden] { display: none !important; }
+  .acct[hidden], .acct [hidden], .files [hidden] { display: none !important; }
   .acct select { @apply max-w-40; }
   .acct .sync { @apply min-w-[10.5em] text-xs; color: var(--muted); }
   .acct .sync.err { color: var(--warn); }

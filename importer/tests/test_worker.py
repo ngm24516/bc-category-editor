@@ -77,6 +77,10 @@ class WorkerTests(unittest.TestCase):
         write(os.path.join(mod, "lua", "shared", "Translate", "EN", "ItemName.json"), '{ "ItemName_Guns.Pistol": "Pistol" }')
         png(os.path.join(mod, "textures", "Item_Pistol.png"))
         os.makedirs(os.path.join(cls.downloads, "3000000009", "mods", "OldMod", "media"))  # Build 41 only
+        # A mod that ships Stockroom (the editor's Stockroom tool is offered only with it).
+        sr = os.path.join(cls.downloads, "3100000001", "mods", "Stockroom", "42", "media")
+        write(os.path.join(sr, "lua", "client", "Stockroom", "Storage.lua"), "-- codec\n")
+        write(os.path.join(sr, "scripts", "sr.txt"), "module SR {\n item Ledger {\n  ItemType = base:normal,\n }\n}\n")
         os.environ.update({"DATABASE_URL": DB, "FAKE_DOWNLOAD_DIR": cls.downloads,
                            "STEAM_API_BASE": f"http://127.0.0.1:{cls.server.server_port}",
                            "WORK_DIR": tempfile.mkdtemp()})
@@ -88,7 +92,8 @@ class WorkerTests(unittest.TestCase):
     def setUp(self):
         STEAM.clear()
         STEAM.update({"2200148440": {"title": "Guns", "time_updated": 1790000000},
-                      "3000000009": {"title": "Old mod", "time_updated": 1790000000}})
+                      "3000000009": {"title": "Old mod", "time_updated": 1790000000},
+                      "3100000001": {"title": "Stockroom pack", "time_updated": 1790000000}})
         with psycopg.connect(DB, autocommit=True) as c:
             c.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         subprocess.run(["node", "server/migrate.js"], cwd=ROOT, env={**os.environ, "DATABASE_URL": DB},
@@ -122,6 +127,21 @@ class WorkerTests(unittest.TestCase):
         item = self.one("SELECT full_type, name, default_category, icon_tile FROM catalog_items WHERE full_type = 'Guns.Pistol'")
         self.assertEqual(item, ("Guns.Pistol", "Pistol", "WepFire", 0))
         self.assertIsNotNone(self.one("SELECT 1 FROM icon_sheets"))
+
+    def test_features_a_mod_provides_are_recorded_on_its_version(self):
+        import worker
+        self.queue("2200148440")
+        self.queue("3100000001")
+        self.assertEqual(worker.cmd_run(), 2)
+        rows = dict(self.one_all("""SELECT m.workshop_id, v.features FROM mod_versions v
+                                      JOIN mods m ON m.id = v.mod_id WHERE m.kind = 'workshop'"""))
+        self.assertEqual(rows, {"2200148440": [], "3100000001": ["stockroom"]})
+        log = self.one("SELECT log FROM import_jobs WHERE workshop_id = '3100000001'")[0]
+        self.assertIn("features: stockroom", log)
+
+    def one_all(self, sql, *args):
+        with psycopg.connect(DB) as c:
+            return c.execute(sql, args).fetchall()
 
     def test_the_same_update_twice_writes_one_version(self):
         import worker

@@ -99,6 +99,15 @@ describe("mod search", () => {
     assert.deepEqual(await (await api(null, "GET", "/api/catalog/mods?q=%25")).json(), []);
   });
 
+  test("each mod lists the features of its newest version", async () => {
+    await pool.query("UPDATE mod_versions SET features = '{stockroom}' WHERE id = $1", [guns.versionId]);
+    const r = await (await api(null, "GET", `/api/catalog/mods?ids=${guns.modId},${brita.modId}`)).json();
+    const byName = Object.fromEntries(r.map(m => [m.name, m.features]));
+    assert.deepEqual(byName, { "Gun Stores": ["stockroom"], "Brita's Weapon Pack": [] });
+    const base = await (await api(null, "GET", "/api/catalog/base")).json();
+    assert.deepEqual(base.features, []);
+  });
+
   test("lookup by ids", async () => {
     const r = await (await api(null, "GET", `/api/catalog/mods?ids=${guns.modId},${brita.modId},junk`)).json();
     assert.equal(r.length, 2);
