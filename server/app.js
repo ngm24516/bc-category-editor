@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import compression from "compression";
 import express from "express";
 import { avatarUrl, createAuth } from "./auth.js";
+import { createAdminRouter } from "./admin.js";
 import { createCatalogRouter } from "./catalog.js";
 import { createImportsRouter } from "./imports.js";
 import { createSteam } from "./steam.js";
@@ -54,10 +55,12 @@ export function createApp({ pool, config, fetchImpl }) {
   });
   app.use("/api/catalog", createCatalogRouter({ pool }));
   app.use("/api/sets", createSetsRouter({ pool, requireUser: auth.requireUser }));
+  app.use("/api/admin", createAdminRouter({ pool, requireUser: auth.requireUser, config }));
   const steam = createSteam({ apiBase: config.steamApiBase, ...(fetchImpl ? { fetchImpl } : {}) });
   app.use("/api", createImportsRouter({ pool, requireUser: auth.requireUser, steam }));
   app.use("/api", (_req, res) => res.status(404).json({ error: "not_found" }));
 
+  app.get("/admin", (_req, res) => { res.setHeader("Cache-Control", "no-cache"); res.sendFile(path.join(WEB_DIR, "admin.html")); });
   app.use(express.static(WEB_DIR, {
     index: "index.html",
     setHeaders(res, file) {

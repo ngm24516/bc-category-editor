@@ -30,6 +30,10 @@ Browser ──► Azure Container Apps (one container, one origin)
   each item anonymously with SteamCMD, reads its files and writes a new catalog version. Every request is
   recorded against the account that made it, and each mod shows who first added it. Limits: 10 new mods or
   1 collection a day per user (admins exempt). An hourly job queues new versions of mods that changed.
+- **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
+  `ADMIN_DISCORD_IDS`. Shows the queue, when the importer and the hourly update check run next and last, every
+  finished import with its worker log, and each importer run (`importer_runs`). Failed imports can be retried.
+  Everyone else gets 403; the account menu at the top right links there for admins only.
 - Signed out, the editor still works and keeps edits (and the chosen mods) in that browser only.
 
 ## Pipeline
