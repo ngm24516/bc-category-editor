@@ -26,7 +26,8 @@ function cookiesFrom(res) {
 }
 
 // Fake Steam: tests put Workshop items and collections here.
-// pages: collection id -> the HTML of its public page (used when the API hides a removed collection).
+// pages: collection id -> the HTML of its public page (used when the API hides a removed collection), and
+// "changelog/<id>" -> an item's change-notes page (used for public items the API calls missing).
 export const STEAM = { items: new Map(), collections: new Map(), pages: new Map(), down: false };
 
 export async function startHarness({ fetchImpl } = {}) {
@@ -35,7 +36,10 @@ export async function startHarness({ fetchImpl } = {}) {
     req.on("data", c => { body += c; });
     req.on("end", () => {
       if (req.method === "GET" && req.url.startsWith("/sharedfiles/filedetails/")) {
-        const page = STEAM.down ? null : STEAM.pages.get(new URL(req.url, "http://x").searchParams.get("id"));
+        const u = new URL(req.url, "http://x");
+        const key = u.pathname.startsWith("/sharedfiles/filedetails/changelog/")
+          ? "changelog/" + u.pathname.split("/").pop() : u.searchParams.get("id");
+        const page = STEAM.down ? null : STEAM.pages.get(key);
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         return res.end(page ?? "<html><title>Steam Community :: Error</title><body>There was a problem accessing the item.</body></html>");
       }

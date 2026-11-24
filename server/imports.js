@@ -126,6 +126,10 @@ export function createImportsRouter({ pool, requireUser, steam }) {
         }
       }
     }
+    // Public items Steam's API won't describe are read from their pages instead.
+    try { await steam.withPageFallback(info, children ? children.slice(0, LIMITS.collectionSize) : [id]); } catch (err) {
+      console.warn("Steam page read failed:", err.message);
+    }
     const kind = children ? "collection" : "mod";
     const head = info.get(id);
     // A collection is only a list: if Steam still gives us its items, each one is checked on its own below,

@@ -25,6 +25,14 @@ except ImportError:  # pragma: no cover
     psycopg = None
 
 STEAM = {}  # workshop id -> {"title", "time_updated", "app"}
+PAGES = {}  # workshop id -> change-notes page HTML, for public items Steam's API calls missing
+
+
+def changelog_page(title, *note_times, app=108600):
+    notes = "".join(f'<div class="detailBox workshopAnnouncement noFooter changeLogCtn">'
+                    f'<div class="changelog headline">Update</div><p id="{t}"></p></div>' for t in note_times)
+    return (f'<html><a href="https://steamcommunity.com/app/{app}">Project Zomboid</a>'
+            f'<div class="workshopItemTitle">{title}</div>{notes}</html>')
 
 
 class FakeSteam(BaseHTTPRequestHandler):
@@ -39,6 +47,14 @@ class FakeSteam(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_GET(self):  # noqa: N802
+        ws = self.path.rstrip("/").rsplit("/", 1)[-1]
+        page = PAGES.get(ws) if self.path.startswith("/sharedfiles/filedetails/changelog/") else None
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write((page or "<html><title>Steam Community :: Error</title></html>").encode())
 
     def log_message(self, *a):
         pass
@@ -83,6 +99,7 @@ class WorkerTests(unittest.TestCase):
         write(os.path.join(sr, "scripts", "sr.txt"), "module SR {\n item Ledger {\n  ItemType = base:normal,\n }\n}\n")
         os.environ.update({"DATABASE_URL": DB, "FAKE_DOWNLOAD_DIR": cls.downloads,
                            "STEAM_API_BASE": f"http://127.0.0.1:{cls.server.server_port}",
+                           "STEAM_COMMUNITY_BASE": f"http://127.0.0.1:{cls.server.server_port}",
                            "WORK_DIR": tempfile.mkdtemp()})
 
     @classmethod
@@ -91,6 +108,7 @@ class WorkerTests(unittest.TestCase):
 
     def setUp(self):
         STEAM.clear()
+        PAGES.clear()
         STEAM.update({"2200148440": {"title": "Guns", "time_updated": 1790000000},
                       "3000000009": {"title": "Old mod", "time_updated": 1790000000},
                       "3100000001": {"title": "Stockroom pack", "time_updated": 1790000000}})
@@ -142,6 +160,26 @@ class WorkerTests(unittest.TestCase):
     def one_all(self, sql, *args):
         with psycopg.connect(DB) as c:
             return c.execute(sql, args).fetchall()
+
+    def test_a_public_item_steams_api_hides_is_read_from_its_page(self):
+        import worker
+        del STEAM["2200148440"]  # Steam's API answers "result 9" for it
+        PAGES["2200148440"] = changelog_page("Guns &amp; Ammo", 1794501087, 1791972199)
+        self.queue("2200148440")
+        self.assertEqual(worker.cmd_run(), 1)
+        updated = self.one("""SELECT v.source_updated_at FROM mod_versions v
+                                      JOIN mods m ON m.id = v.mod_id WHERE m.workshop_id = '2200148440'""")
+        self.assertEqual(updated[0].timestamp(), 1794501087)
+        # The hourly check also reads the page: a newer change note queues an update.
+        PAGES["2200148440"] = changelog_page("Guns &amp; Ammo", 1795000000, 1794501087)
+        self.assertEqual(worker.cmd_check_updates(), 1)
+        self.assertEqual(self.one("SELECT title FROM import_jobs WHERE status = 'queued'")[0], "Guns & Ammo")
+
+    def test_page_parsing(self):
+        import worker
+        self.assertIsNone(worker.parse_item_page("<html><title>Steam Community :: Error</title></html>"))
+        d = worker.parse_item_page(changelog_page("Riku Emporium B42"))
+        self.assertEqual((d["title"], d["app"], d["updated"]), ("Riku Emporium B42", 108600, None))
 
     def test_the_same_update_twice_writes_one_version(self):
         import worker
