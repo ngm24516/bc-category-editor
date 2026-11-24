@@ -1,6 +1,8 @@
 // Steam's public Workshop API: item details and collection contents. Neither call needs an API key.
 // When Steam removes a collection for breaking its rules, the API stops listing its items but the public
 // collection page still shows them, so collectionFromPage() reads the item ids from that page.
+// Steam's API also answers "no such item" for some public mods (Steam doesn't say why); itemFromPage()
+// reads those from the item's public change-notes page, and withPageFallback() applies it to a details() map.
 // The base URLs are configurable only so tests can point at a fake Steam.
 export const PZ_APP_ID = 108600;
 
@@ -96,5 +98,46 @@ export function createSteam({ apiBase = "https://api.steampowered.com", communit
     return { ids, title };
   }
 
-  return { details, collectionChildren, collectionFromPage };
+  async function page(path) {
+    const res = await fetchImpl(`${community}${path}`, {
+      headers: { Accept: "text/html", "Accept-Language": "en" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(20_000),
+    });
+    return res.ok ? (await res.text()).slice(0, PAGE_LIMIT) : null;
+  }
+
+  // Details of a public item Steam's API won't describe, from its change-notes page, in the same shape as
+  // details(); null when the page doesn't show an item (private, deleted, removed). updatedAt is the newest
+  // change note's timestamp (each note is <p id="<unix time>">), or null when it was never updated.
+  async function itemFromPage(id) {
+    if (!/^\d{1,20}$/.test(id)) return null;
+    const html = await page(`/sharedfiles/filedetails/changelog/${id}`);
+    return html ? parseItemPage(id, html) : null;
+  }
+
+  // Fills in, from public pages, the ids details() reported as missing but not removed (at most `limit`).
+  async function withPageFallback(info, ids, limit = 100) {
+    const hidden = ids.filter(id => !info.get(id)?.ok && !info.get(id)?.removed).slice(0, limit);
+    for (let i = 0; i < hidden.length; i += 4) {
+      const found = await Promise.all(hidden.slice(i, i + 4).map(id => itemFromPage(id).catch(() => null)));
+      for (const d of found) if (d) info.set(d.id, d);
+    }
+    return info;
+  }
+
+  return { details, collectionChildren, collectionFromPage, itemFromPage, withPageFallback };
+}
+
+// The page's own game hub link (steamcommunity.com/app/<appid>) says which game the item belongs to.
+export function parseItemPage(id, html) {
+  const title = decodeEntities(html.match(/class="workshopItemTitle"[^>]*>([^<]{1,300})</)?.[1] || "").trim().slice(0, 200);
+  const appId = Number(html.match(/steamcommunity\.com\/app\/(\d{1,10})/)?.[1] || 0);
+  if (!title || !appId) return null;
+  const notes = html.match(/class="[^"]*\bchangeLogCtn\b[^"]*"[\s\S]*?<p id="(\d{9,11})"/);
+  return {
+    id, ok: true, removed: false, fromPage: true, title, appId,
+    updatedAt: notes ? new Date(Number(notes[1]) * 1000) : null,
+    size: 0,
+  };
 }

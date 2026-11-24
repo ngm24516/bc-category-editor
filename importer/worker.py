@@ -12,8 +12,10 @@ one transaction, delete the download. A version is never changed once written.
 Environment: DATABASE_URL, STEAMCMD (path to steamcmd.sh), WORK_DIR, STEAM_API_BASE, MAX_JOBS (per run),
 FAKE_DOWNLOAD_DIR (tests only: <dir>/<workshop id> stands in for a download).
 """
+import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,8 +51,11 @@ def log(msg):
 
 
 # ------------------------------------------------------------------ Steam
-def steam_details(ids):
-    """{id: {title, updated (datetime), size, app, ok}} from Steam's public Workshop API, 100 at a time."""
+def steam_details(ids, page_limit=200):
+    """{id: {title, updated (datetime), size, app, ok, removed}} from Steam's public Workshop API, 100 at a time.
+
+    Steam's API answers "no such item" for some public mods; those (up to page_limit) are read from their
+    public change-notes page instead (see item_from_page)."""
     base = os.environ.get("STEAM_API_BASE", "https://api.steampowered.com").rstrip("/")
     out = {}
     for i in range(0, len(ids), 100):
@@ -68,8 +73,43 @@ def steam_details(ids):
                 "updated": datetime.fromtimestamp(int(d["time_updated"]), timezone.utc) if d.get("time_updated") else None,
                 "size": int(d.get("file_size") or 0),
                 "app": int(d.get("consumer_app_id") or d.get("creator_app_id") or 0),
+                "removed": bool(d.get("banned")),
             }
+    hidden = [i for i in ids if not out.get(i, {}).get("ok") and not out.get(i, {}).get("removed")][:page_limit]
+    for ws in hidden:
+        try:
+            found = item_from_page(ws)
+        except (OSError, ValueError) as e:
+            log(f"Couldn't read Steam's page for {ws}: {e}")
+            continue
+        if found:
+            out[ws] = found
     return out
+
+
+def item_from_page(workshop_id):
+    """Details of a public item Steam's API won't describe, read from its change-notes page; None when the
+    page shows no item. updated is the newest change note's time (each note is <p id="<unix time>">)."""
+    base = os.environ.get("STEAM_COMMUNITY_BASE", "https://steamcommunity.com").rstrip("/")
+    req = urllib.request.Request(f"{base}/sharedfiles/filedetails/changelog/{workshop_id}",
+                                 headers={"Accept": "text/html", "Accept-Language": "en"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        page = r.read(4 * 1024 * 1024).decode("utf-8", "replace")
+    return parse_item_page(page)
+
+
+def parse_item_page(page):
+    title = re.search(r'class="workshopItemTitle"[^>]*>([^<]{1,300})<', page)
+    app = re.search(r"steamcommunity\.com/app/(\d{1,10})", page)
+    if not title or not app or not html.unescape(title.group(1)).strip():
+        return None
+    note = re.search(r'class="[^"]*\bchangeLogCtn\b[^"]*"[\s\S]*?<p id="(\d{9,11})"', page)
+    return {
+        "ok": True, "removed": False, "from_page": True,
+        "title": html.unescape(title.group(1)).strip()[:200],
+        "updated": datetime.fromtimestamp(int(note.group(1)), timezone.utc) if note else None,
+        "size": 0, "app": int(app.group(1)),
+    }
 
 
 def download(workshop_id, work_dir):

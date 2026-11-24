@@ -169,6 +169,28 @@ describe("importing a collection", () => {
     assert.deepEqual((await jobs()).map(j => j.workshop_id), ["3200000002"]);
   });
 
+  test("a public mod Steam's API calls missing is read from its change-notes page", async () => {
+    // Steam's API answers "result 9" for some public mods (e.g. Riku Emporium B42, 3623584152).
+    STEAM.pages.set("changelog/3623584152", `<html><a href="https://steamcommunity.com/app/108600">Project Zomboid</a>
+      <div class="workshopItemTitle">Riku Emporium B42</div>
+      <div class="detailBox workshopAnnouncement noFooter changeLogCtn"><div class="changelog headline">Update: Nov 12 @ 8:31am</div><p id="1794501087"></p></div>
+      <div class="detailBox workshopAnnouncement noFooter changeLogCtn"><p id="1791972199"></p></div></html>`);
+    const r = await api(alice, "POST", "/api/imports", { link: link("3623584152") });
+    assert.equal(r.status, 201);
+    const q = await r.json();
+    assert.equal(q.title, "Riku Emporium B42");
+    assert.deepEqual(q.items.map(i => [i.workshopId, i.status]), [["3623584152", "queued"]]);
+    const { rows: [job] } = await pool.query("SELECT title, source_updated_at FROM import_jobs");
+    assert.equal(job.title, "Riku Emporium B42");
+    assert.equal(new Date(job.source_updated_at).getTime(), 1794501087 * 1000);
+  });
+
+  test("a page for another game is still refused", async () => {
+    STEAM.pages.set("changelog/3623584153", `<a href="https://steamcommunity.com/app/4000">Garry's Mod</a><div class="workshopItemTitle">Prop pack</div>`);
+    const r = await api(alice, "POST", "/api/imports", { link: link("3623584153") });
+    assert.equal(r.status, 400);
+  });
+
   test("an item that is neither public nor a listed collection is still a clear 404", async () => {
     const r = await api(alice, "POST", "/api/imports", { link: link("3299999999") });
     assert.equal(r.status, 404);
