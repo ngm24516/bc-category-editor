@@ -1011,10 +1011,16 @@ function loadVersion(id) {
 
 // Rebuilds ITEMS from the base game and MODLIST. Overrides are untouched; overrides for items that
 // aren't in any loaded layer reappear as "not in these mods" items.
+const MOD_IDS_PER_REQUEST = 40;
 async function buildCatalog() {
   if (!BASE) BASE = await getJSON("/api/catalog/base");
   const need = MODLIST.filter(id => !MODINFO.has(id));
-  if (need.length) for (const m of await getJSON("/api/catalog/mods?ids=" + need.join(","))) MODINFO.set(m.id, m);
+  // A few dozen ids per request: one URL listing hundreds of mods is too long for the server (HTTP 431).
+  const parts = [];
+  for (let i = 0; i < need.length; i += MOD_IDS_PER_REQUEST) parts.push(need.slice(i, i + MOD_IDS_PER_REQUEST));
+  for (const list of await Promise.all(parts.map(p => getJSON("/api/catalog/mods?ids=" + p.join(","))))) {
+    for (const m of list) MODINFO.set(m.id, m);
+  }
   MODLIST = MODLIST.filter(id => MODINFO.has(id));
   const layers = [BASE, ...MODLIST.map(id => MODINFO.get(id)).filter(m => m.versionId)];
   const datas = await Promise.all(layers.map(l => loadVersion(l.versionId)));
@@ -1373,11 +1379,9 @@ async function boot() {
   $("rows").innerHTML = '<div class="empty">Loading item list…</div>';
   const d = loadDraft();
   MODLIST = d && Array.isArray(d.m) ? d.m : [];
+  let catalogOk = true;
   try { await buildCatalog(); }
-  catch (e) {
-    $("rows").innerHTML = '<div class="empty">The item list didn\'t load. Reload the page in a minute.</div>';
-    return;
-  }
+  catch (e) { catalogOk = false; }
   updateModsButton();
   loaded = { overrides: new Map(), defs: new Map(), label: "Better Containers' defaults" };
   if (d && d.o) {
@@ -1390,6 +1394,7 @@ async function boot() {
     notice("Showing the base game with Better Containers' defaults. Add your mods with <b>Mods…</b>, and load your current setup with <b>Load .ini files</b> or by dropping CategoryOverrides.ini and CustomCategories.ini on the page.", "info");
   }
   ensureUnknownItems(); refreshAll();
+  if (!catalogOk) notice("The item list didn't load. Reload the page in a minute.", "warn");
   try { const c = window.claude; downloads = c && c.use ? await c.use("downloads") : null; } catch (e) { downloads = null; }
   await Account.init();
 }
