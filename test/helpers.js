@@ -99,6 +99,7 @@ export async function startHarness({ fetchImpl } = {}) {
     DISCORD_API_BASE: discordUrl + "/api", DISCORD_AUTHORIZE_URL: discordUrl + "/oauth2/authorize",
     ADMIN_DISCORD_IDS: "100000000000000099",
     STEAM_API_BASE: steamUrl, STEAM_COMMUNITY_BASE: steamUrl,
+    MARKET_ALLOW_PRIVATE: "1", // the marketplace tests run a fake marketplace on localhost
   });
   const app = createApp({ pool, config, fetchImpl });
   server.on("request", app);

@@ -5,6 +5,7 @@
 //   Per environment, two Container Apps Jobs running the importer image:
 //     <app>-import   starts when import_jobs has queued work (KEDA postgresql scaler), drains it, stops
 //     <app>-updates  every hour: asks Steam which catalog mods changed and queues their new versions
+//     <app>-market   every hour: records every listing of each marketplace an admin added (prices)
 //
 // Deploy (see docs/SETUP-AZURE.md):
 //   az deployment group create -g rg-bceditor -f infra/main.bicep -p infra/main.bicepparam
@@ -276,6 +277,48 @@ resource updateJobs 'Microsoft.App/jobs@2024-03-01' = [for (e, i) in environment
           name: 'updates'
           image: importerImage
           args: [ 'check-updates' ]
+          env: [ { name: 'DATABASE_URL', secretRef: 'database-url' } ]
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+        }
+      ]
+    }
+  }
+}]
+
+// Marketplace prices: reads each enabled marketplace's listings API (public https sites only; see
+// importer/market.py) and records every listing, so the editor can show average / low / high prices.
+resource marketJobs 'Microsoft.App/jobs@2024-03-01' = [for (e, i) in environments: {
+  name: '${prefix}-${e.name}-market'
+  location: location
+  tags: union(tags, { environment: e.name })
+  dependsOn: [databases[i], pgAllowAzure]
+  properties: {
+    environmentId: env.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaTimeout: 900
+      replicaRetryLimit: 1
+      secrets: [
+        {
+          name: 'database-url'
+          value: 'postgres://${postgresAdminLogin}:${uriComponent(postgresAdminPassword)}@${pg.properties.fullyQualifiedDomainName}:5432/${e.database}?sslmode=require'
+        }
+      ]
+      scheduleTriggerConfig: {
+        cronExpression: '47 * * * *' // every hour at :47 (UTC); the dashboard reads MARKET_CHECK_MINUTE (default 47)
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'market'
+          image: importerImage
+          args: [ 'market' ]
           env: [ { name: 'DATABASE_URL', secretRef: 'database-url' } ]
           resources: {
             cpu: json('0.25')

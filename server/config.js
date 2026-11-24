@@ -29,6 +29,9 @@ export function loadConfig(env = process.env) {
     // Shown on the admin dashboard; must match the jobs in infra/main.bicep.
     importerPollSeconds: Number(env.IMPORTER_POLL_SECONDS || 30),
     updateCheckMinute: Number(env.UPDATE_CHECK_MINUTE || 17),
+    marketCheckMinute: Number(env.MARKET_CHECK_MINUTE || 47),
+    // Tests only: lets a fake marketplace on localhost (plain http) be added. Never set this in Azure.
+    marketAllowPrivate: env.MARKET_ALLOW_PRIVATE === "1",
     adminDiscordIds: new Set((env.ADMIN_DISCORD_IDS || "").split(",").map(s => s.trim()).filter(Boolean)),
     sessionDays: Number(env.SESSION_DAYS || 30),
     migrateOnStart: env.MIGRATE_ON_START !== "false",

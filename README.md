@@ -33,6 +33,11 @@ Browser ──► Azure Container Apps (one container, one origin)
 - **Mod features:** while importing, the importer also notes tools a mod provides, from its file names
   (`importer/pzcatalog/features.py`, stored in `mod_versions.features`). The editor shows **Stockroom books…**
   only when a mod in the setup ships Stockroom (`media/lua/*/Stockroom/Storage.lua`).
+- **Marketplace prices** (`server/market.js`, `importer/market.py`, migration 006): admins add an in-game
+  marketplace's listings API on the dashboard (checked first; https and public addresses only). The hourly
+  `<app>-market` job reads every page and stores each listing once per price (`market_listings`). Each account
+  picks a marketplace (`user_marketplaces`, RLS) and the item list gets **Avg / Low / High** columns, sortable,
+  for items whose full type is exactly a library item. Prices are per item.
 - **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
   `ADMIN_DISCORD_IDS`. Shows the queue, when the importer and the hourly update check run next and last, every
   finished import with its worker log, and each importer run (`importer_runs`). Failed imports can be retried.

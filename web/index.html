@@ -67,6 +67,11 @@
         <button data-v="blk">Blacklisted</button>
       </div>
     </div>
+    <div id="marketBox" hidden>
+      <label for="marketSel">Prices from</label>
+      <select id="marketSel"><option value="">No prices</option></select>
+      <div class="help" id="marketInfo" style="margin-top:4px"></div>
+    </div>
     <div>
       <label for="blk">Category blacklist (Mod Options)</label>
       <input type="text" id="blk" value="Lore">
@@ -87,7 +92,7 @@
       <span class="spacer"></span>
       <span class="muted" id="shownInfo"></span>
     </div>
-    <div class="thead"><span></span><span></span><span>Item</span><span class="col-mod">Mod</span><span class="col-def">Default</span><span>Category</span><span></span></div>
+    <div class="thead"><span></span><span></span><span>Item</span><span class="col-mod">Mod</span><span class="col-def">Default</span><button class="col-price sorter" data-sort="avg" title="Average price of every listing seen. Click to sort">Avg</button><button class="col-price col-lh sorter" data-sort="low" title="Lowest listing price seen. Click to sort">Low</button><button class="col-price col-lh sorter" data-sort="high" title="Highest listing price seen. Click to sort">High</button><span>Category</span><span></span></div>
     <div class="scroller" id="scroller" tabindex="0" aria-label="Items. Click to select, drag, Ctrl+click, Shift+click, Ctrl+A"><div class="rows" id="rows"></div></div>
   </section>
 
@@ -211,7 +216,7 @@ let overrides = new Map(), defs = new Map(), blacklist = new Set(["lore"]);
 let loaded = { overrides: new Map(), defs: new Map(), label: "" };
 let filtered = [], selected = new Set();
 let undoStack = null;
-const F = { q: "", mod: "all", cat: "all", status: "all" };
+const F = { q: "", mod: "all", cat: "all", status: "all", sort: null }; // sort: { key: "avg" | "low" | "high", dir: -1 | 1 }
 
 // ------------------------------------------------------------ search
 // Words can come in any order and skip words in between ("a d" finds "a b c d").
@@ -369,6 +374,15 @@ function applyFilters() {
     }
     return true;
   });
+  if (F.sort && PRICES) {
+    const k = { avg: 0, low: 1, high: 2 }[F.sort.key], dir = F.sort.dir;
+    // Items without a price stay at the end whichever way the column is sorted.
+    filtered.sort((a, b) => {
+      const pa = PRICES.get(a.ft), pb = PRICES.get(b.ft);
+      if (!pa || !pb) return pa ? -1 : pb ? 1 : 0;
+      return (pa[k] - pb[k]) * dir;
+    });
+  }
   $("rows").style.height = (filtered.length * ROWH) + "px";
   $("shownInfo").textContent = filtered.length.toLocaleString() + " of " + ITEMS.length.toLocaleString() + " items shown";
   anchorIdx = focusFt ? idxOf(focusFt) : -1;
@@ -402,6 +416,34 @@ function modLabel(it) {
 }
 
 let lastRange = "";
+// ------------------------------------------------------------ marketplace prices
+// PRICES: full type -> [average, low, high, listings] from the chosen marketplace (see Market below).
+let PRICES = null;
+const money = v => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+function priceCells(ft) {
+  const p = PRICES && PRICES.get(ft);
+  if (!p) return '<div class="cell col-price muted">–</div><div class="cell col-price col-lh muted">–</div><div class="cell col-price col-lh muted">–</div>';
+  const n = p[3] + (p[3] === 1 ? " listing" : " listings");
+  return '<div class="cell col-price" title="Average of ' + n + '">' + money(p[0]) + '</div>' +
+    '<div class="cell col-price col-lh" title="Lowest of ' + n + '">' + money(p[1]) + '</div>' +
+    '<div class="cell col-price col-lh" title="Highest of ' + n + '">' + money(p[2]) + '</div>';
+}
+function renderSorters() {
+  document.querySelectorAll(".sorter").forEach(b => {
+    const on = F.sort && F.sort.key === b.dataset.sort;
+    b.classList.toggle("on", !!on);
+    b.dataset.dir = on ? (F.sort.dir < 0 ? "desc" : "asc") : "";
+    b.setAttribute("aria-sort", on ? (F.sort.dir < 0 ? "descending" : "ascending") : "none");
+  });
+}
+// Highest first, then lowest first, then back to the normal order.
+document.querySelectorAll(".sorter").forEach(b => b.addEventListener("click", () => {
+  const key = b.dataset.sort, cur = F.sort && F.sort.key === key ? F.sort.dir : 0;
+  F.sort = cur === 0 ? { key, dir: -1 } : cur === -1 ? { key, dir: 1 } : null;
+  $("scroller").scrollTop = 0;
+  renderSorters(); applyFilters();
+}));
+
 function renderRows(force) {
   const sc = $("scroller");
   const first = Math.max(0, Math.floor(sc.scrollTop / ROWH) - 8);
@@ -422,6 +464,7 @@ function renderRows(force) {
       '<div class="nm"><div title="' + esc(it.name) + '">' + esc(it.name) + (it.unknown ? ' <span class="chip warn">not on this PC</span>' : "") + '</div><div class="ft">' + esc(it.ft) + '</div></div>' +
       '<div class="cell col-mod muted" title="' + esc(modLabel(it)) + '">' + esc(modLabel(it)) + '</div>' +
       '<div class="cell col-def" title="' + esc(defaultOf(it)) + '">' + esc(catName(defaultOf(it))) + '</div>' +
+      priceCells(it.ft) +
       '<button class="catbtn' + (ov ? " custom" : "") + (blk ? " blk" : "") + '" title="' + esc(tip) + '">' + esc(catName(cur)) + '</button>' +
       (ov ? '<button class="rst" title="Remove your override">Reset</button>' : "<span></span>") +
       "</div>";
@@ -1292,6 +1335,7 @@ const Account = (() => {
       items: [
         { label: "Your setups…", onClick: () => $("setModal").classList.add("on") },
         { label: "Mods and imports…", onClick: () => $("btnMods").click() },
+        { label: "Marketplace prices…", onClick: () => Market.focus() },
         { label: "Admin dashboard", href: "/admin", show: me.data.role === "admin" },
       ],
       onLogout: async () => {
@@ -1374,6 +1418,68 @@ const Account = (() => {
     signedIn: () => enabled, available: () => !$("userMenu").hidden };
 })();
 
+// ------------------------------------------------------------ marketplace choice
+// Admins add marketplaces; each account picks the one whose prices show (saved to the account when signed in,
+// to this browser otherwise). Prices are the average, lowest and highest listing seen by the hourly market job.
+const Market = (() => {
+  const KEY = "bcedit.market.v1";
+  let markets = [], choice = null;
+
+  function info() {
+    const m = markets.find(x => x.id === choice);
+    if (!m) { $("marketInfo").textContent = "Pick a marketplace to see average, low and high prices for each item."; return; }
+    const when = m.lastSnapshotAt ? new Date(m.lastSnapshotAt).toLocaleString() : "not yet";
+    $("marketInfo").textContent = (PRICES ? PRICES.size.toLocaleString() : "0") + " items priced from every listing seen; last snapshot " + when + ". Sort with the Avg, Low and High column titles.";
+  }
+
+  async function load() {
+    PRICES = null;
+    if (choice) {
+      try {
+        const r = await fetch("/api/markets/" + encodeURIComponent(choice) + "/prices", { credentials: "same-origin" });
+        if (r.ok) PRICES = new Map(Object.entries((await r.json()).items));
+      } catch (e) { /* offline: no prices */ }
+    }
+    if (!PRICES) F.sort = null;
+    document.body.classList.toggle("prices-on", !!PRICES);
+    renderSorters(); applyFilters(); info();
+  }
+
+  async function choose(id) {
+    choice = id || null;
+    if (Account.signedIn()) {
+      const r = await fetch("/api/markets/choice", { method: "PUT", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ marketplaceId: choice }) });
+      if (!r.ok) toast("Couldn't save your marketplace choice. Try again.");
+    } else {
+      try { choice ? localStorage.setItem(KEY, choice) : localStorage.removeItem(KEY); } catch (e) { /* storage unavailable */ }
+    }
+    await load();
+  }
+
+  async function init() {
+    let data;
+    try {
+      const r = await fetch("/api/markets", { credentials: "same-origin" });
+      if (!r.ok) return;
+      data = await r.json();
+    } catch (e) { return; }
+    markets = data.markets;
+    if (!markets.length) return;
+    let local = null; try { local = localStorage.getItem(KEY); } catch (e) { /* storage unavailable */ }
+    choice = Account.signedIn() ? data.choice : local;
+    if (choice && !markets.some(m => m.id === choice)) choice = null;
+    $("marketSel").innerHTML = '<option value="">No prices</option>' +
+      markets.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join("");
+    $("marketSel").value = choice || "";
+    $("marketSel").onchange = () => choose($("marketSel").value);
+    $("marketBox").hidden = false;
+    await load();
+  }
+
+  return { init, focus: () => { $("marketSel").focus(); $("marketSel").scrollIntoView({ block: "center" }); } };
+})();
+
 // ------------------------------------------------------------ boot
 async function boot() {
   $("rows").innerHTML = '<div class="empty">Loading item list…</div>';
@@ -1397,6 +1503,7 @@ async function boot() {
   if (!catalogOk) notice("The item list didn't load. Reload the page in a minute.", "warn");
   try { const c = window.claude; downloads = c && c.use ? await c.use("downloads") : null; } catch (e) { downloads = null; }
   await Account.init();
+  await Market.init();
 }
 boot();
 </script>

@@ -161,3 +161,22 @@ queued) and `<app>-updates` (every hour, queues new versions of mods that change
    shows a run start within about a minute, and the mod turns **Ready** in the Mods dialog a few minutes later.
 
 From then on every Deploy updates the jobs' image along with the apps.
+
+## 11. Turn on marketplace prices (once, after the marketplace pull request is merged)
+
+Marketplace prices come from a third job per environment, `<app>-market`, which runs every hour at :47 UTC and
+records every listing of each marketplace an admin added.
+
+1. Create the job by running step 10's three commands again (same existing Postgres password, same Discord
+   secret). Until you do, Deploy shows a warning that `<app>-market` doesn't exist yet; nothing else breaks.
+2. Check: portal → **rg-bceditor** shows `bceditor-staging-market` and `bceditor-prod-market`.
+3. Add a marketplace: sign in as an admin → avatar → **Admin dashboard** → **Marketplaces** → a name and the
+   listings API address, for example
+   `https://api.onelifepz.com/portal/marketplace?search=&shop=&sort=newest&page=1&pageSize=30`
+   → **Check and add**. The site fetches the first page to check it answers like a marketplace.
+4. Wait for the next run at :47 (or start one now: portal → `bceditor-prod-market` → **Run now**). The
+   dashboard's Marketplaces table then shows the listings, items priced and prices recorded.
+5. In the editor, pick the marketplace under **Prices from** (or avatar → **Marketplace prices…**). Signed in,
+   the choice is saved to your account.
+
+Each environment has its own database, so add the marketplace on staging and on production separately.

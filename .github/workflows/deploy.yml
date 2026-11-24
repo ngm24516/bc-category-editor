@@ -89,7 +89,7 @@ jobs:
           az extension add --name containerapp --upgrade --only-show-errors
           az containerapp update --name "${{ vars.STAGING_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --image "${{ needs.image.outputs.image }}" --only-show-errors -o none
-          for job in "${{ vars.STAGING_APP_NAME }}-import" "${{ vars.STAGING_APP_NAME }}-updates"; do
+          for job in "${{ vars.STAGING_APP_NAME }}-import" "${{ vars.STAGING_APP_NAME }}-updates" "${{ vars.STAGING_APP_NAME }}-market"; do
             if az containerapp job show -n "$job" -g "${{ vars.AZURE_RESOURCE_GROUP }}" -o none 2>/dev/null; then
               az containerapp job update -n "$job" -g "${{ vars.AZURE_RESOURCE_GROUP }}" --image "${{ needs.image.outputs.importer }}" --only-show-errors -o none
             else
@@ -131,7 +131,7 @@ jobs:
           az extension add --name containerapp --upgrade --only-show-errors
           az containerapp update --name "${{ vars.PROD_APP_NAME }}" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --image "${{ needs.image.outputs.image }}" --only-show-errors -o none
-          for job in "${{ vars.PROD_APP_NAME }}-import" "${{ vars.PROD_APP_NAME }}-updates"; do
+          for job in "${{ vars.PROD_APP_NAME }}-import" "${{ vars.PROD_APP_NAME }}-updates" "${{ vars.PROD_APP_NAME }}-market"; do
             if az containerapp job show -n "$job" -g "${{ vars.AZURE_RESOURCE_GROUP }}" -o none 2>/dev/null; then
               az containerapp job update -n "$job" -g "${{ vars.AZURE_RESOURCE_GROUP }}" --image "${{ needs.image.outputs.importer }}" --only-show-errors -o none
             else
