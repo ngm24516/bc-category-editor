@@ -17,6 +17,9 @@ sign-in and Postgres, deployed as one container to Azure Container Apps. See REA
 - **The item catalog is shared and read-only for users.** Base game + imported Workshop mods live in `mods`,
   `mod_versions`, `catalog_items`, `icon_sheets`. A version is never changed after it's written (the API caches
   it forever); an update is a new version. Setups choose mods in `set_mods` (user data, RLS).
+- **Outbound calls to addresses users or admins type in** (marketplace APIs) go through `getJsonSafely`
+  (server/safe-fetch.js) or `get_json` (importer/market.py): https only, public IPs only, pinned to the checked IP,
+  no redirects, size and time limits. Only admins can add a marketplace.
 - **Importer code (`importer/pzcatalog`) only reads files.** Never execute, `require` or `eval` anything from a mod.
 - **Imports need a signed-in user and are recorded** (`import_requests`, RLS) against that user; jobs carry
   `requested_by`; the first import of a mod sets `mods.created_by`. The API only queues `import_jobs`; only the

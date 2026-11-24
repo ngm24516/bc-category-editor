@@ -4,6 +4,7 @@
   python3 worker.py run             drain the queue (an Azure Container Apps Job starts this when jobs are queued)
   python3 worker.py check-updates   hourly: ask Steam which catalog mods changed and queue their new versions
   python3 worker.py smoke           download Better Containers with SteamCMD and check its rule files (CI smoke test)
+  python3 worker.py market          hourly: record every listing of every marketplace (see market.py)
 
 For each job: claim it, download the Workshop item anonymously with SteamCMD, read its scripts, translations
 and icons with pzcatalog (which only reads files; nothing from a mod is ever run), write a new mod version in
@@ -377,4 +378,8 @@ def cmd_smoke():
 
 if __name__ == "__main__":
     command = sys.argv[1] if len(sys.argv) > 1 else "run"
-    {"run": cmd_run, "check-updates": cmd_check_updates, "smoke": cmd_smoke}.get(command, lambda: sys.exit(__doc__))()
+    if command == "market":
+        import market
+        market.cmd_market()
+    else:
+        {"run": cmd_run, "check-updates": cmd_check_updates, "smoke": cmd_smoke}.get(command, lambda: sys.exit(__doc__))()

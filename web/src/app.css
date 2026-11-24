@@ -64,7 +64,7 @@
   button.primary:hover:not(:disabled) { @apply bg-indigo-500; }
   button.danger { color: var(--warn); }
   button:disabled { @apply cursor-default opacity-45; }
-  input[type="text"], input[type="search"], select {
+  input[type="text"], input[type="search"], input[type="url"], select {
     @apply w-full rounded-lg border px-3 py-1.5 shadow-xs transition-colors;
     border-color: var(--line); background: var(--panel);
   }
@@ -126,6 +126,23 @@
     grid-template-columns: 30px 32px minmax(200px, 2.2fr) minmax(120px, 1.1fr) minmax(130px, 1.2fr) minmax(170px, 1.5fr) 64px;
   }
   .thead { @apply h-9 border-b text-xs font-semibold tracking-wide uppercase; color: var(--muted); border-color: var(--line); background: var(--bg); }
+  /* Marketplace prices: three extra columns when a marketplace is chosen (body.prices-on). */
+  .col-price { display: none; }
+  .prices-on .col-price { display: block; }
+  .prices-on .thead, .prices-on .row {
+    grid-template-columns: 30px 32px minmax(200px, 2.2fr) minmax(110px, 1fr) minmax(120px, 1.1fr) 80px 72px 72px minmax(160px, 1.4fr) 64px;
+  }
+  .row .col-price { @apply text-right font-mono text-[12.5px] tabular-nums; }
+  .thead .sorter {
+    @apply flex items-center justify-end gap-1 rounded-none border-0 bg-transparent p-0 text-right text-xs font-semibold tracking-wide uppercase shadow-none;
+    color: var(--muted);
+  }
+  .prices-on .thead .sorter { display: flex; }
+  .thead .sorter:hover { color: var(--ink); background: transparent; }
+  .thead .sorter::after { content: "↕"; @apply text-[10px] opacity-40; }
+  .thead .sorter.on { color: var(--accent); }
+  .thead .sorter[data-dir="desc"]::after { content: "↓"; @apply opacity-100; }
+  .thead .sorter[data-dir="asc"]::after { content: "↑"; @apply opacity-100; }
   .scroller { @apply relative min-h-0 flex-1 overflow-auto; }
   .scroller:focus { @apply outline-none; }
   .rows { @apply relative select-none; }
@@ -218,6 +235,8 @@
   aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
   .thead, .row { grid-template-columns: 26px 32px minmax(130px, 2fr) minmax(130px, 1.4fr) 54px; }
   .col-mod, .col-def { display: none; }
+  .prices-on .thead, .prices-on .row { grid-template-columns: 26px 32px minmax(120px, 2fr) 64px minmax(120px, 1.4fr) 54px; }
+  .prices-on .col-lh, .prices-on .thead .col-lh { display: none; }
 }
 
 @layer components {
@@ -267,6 +286,16 @@
   body.admin { @apply overflow-auto; }
   .admin main.dash { @apply mx-auto flex w-full max-w-7xl flex-col gap-6 p-6; display: flex; }
   .admin main.dash > * { @apply shrink-0; }
+  .dash-sections { @apply flex flex-col gap-6; }
+  .dash-sections > * { @apply shrink-0; }
+  .panel[hidden] { display: none; }
+  .market-add { @apply flex flex-wrap items-end gap-3 px-4 pt-4; }
+  .market-add label { @apply flex flex-col gap-1 text-xs font-semibold tracking-wide uppercase; color: var(--muted); }
+  .market-add label.grow { @apply min-w-72 flex-1; }
+  .market-add input { @apply text-sm font-normal tracking-normal normal-case; color: var(--ink); }
+  .market-note { @apply px-4 pt-2 pb-4 leading-relaxed; }
+  .market-note.err, table.grid .sub.err { color: var(--warn); }
+  table.grid td.acts button.danger { @apply text-white; background: var(--warn); border-color: var(--warn); }
   .admin header .back { @apply text-sm font-medium; }
   .cards { @apply grid gap-3; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .card { @apply rounded-xl border p-4 shadow-xs; border-color: var(--line); background: var(--panel); }

@@ -20,8 +20,21 @@
   <button id="btnRefresh">Refresh</button>
   <div class="usermenu" id="userMenu" hidden></div>
 </header>
-<main class="dash" id="dash">
-  <p class="muted">Loading…</p>
+<main class="dash">
+  <div class="dash-sections" id="dash"><p class="muted">Loading…</p></div>
+  <section class="panel" id="marketPanel" hidden>
+    <h2>Marketplaces <span class="n" id="marketCount">0</span></h2>
+    <form class="market-add" id="marketForm">
+      <label>Name <input type="text" id="mName" maxlength="80" placeholder="OneLife" autocomplete="off" required></label>
+      <label class="grow">Listings API address <input type="url" id="mUrl" maxlength="500" autocomplete="off" required
+        placeholder="https://api.onelifepz.com/portal/marketplace?search=&amp;shop=&amp;sort=newest&amp;page=1&amp;pageSize=30"></label>
+      <button class="primary" id="mAdd">Check and add</button>
+    </form>
+    <p class="muted-note market-note" id="mNote">The address is checked first: it must answer with a <code>listings</code> list whose items have
+      <code>listing_id</code>, <code>full_type</code> and <code>price</code>. The market job then reads every page each hour; prices are per item,
+      and only items in the library get a price. Everyone can pick an enabled marketplace in the editor.</p>
+    <div id="marketTable"></div>
+  </section>
 </main>
 <script>
 "use strict";
@@ -66,6 +79,7 @@ async function getJson(url, opts) {
 
 function message(html) {
   $("dash").innerHTML = `<div class="panel"><div class="empty">${html}</div></div>`;
+  $("marketPanel").hidden = true;
   $("btnRefresh").hidden = true;
 }
 
@@ -89,7 +103,7 @@ function render() {
 
   const runRows = d.runs.map(r => `<tr>
       <td>${esc(fmtTime(r.startedAt))}<span class="sub">${esc(ago(r.startedAt))}</span></td>
-      <td>${r.kind === "import" ? "Import" : "Update check"}</td><td>${badge(r.status)}</td><td>${dur(r.seconds)}</td>
+      <td>${{ import: "Import", "check-updates": "Update check", market: "Marketplace prices" }[r.kind] || esc(r.kind)}</td><td>${badge(r.status)}</td><td>${dur(r.seconds)}</td>
       <td>${r.processed}</td><td>${r.succeeded}</td><td>${r.failed}</td><td class="err">${esc(r.error || "")}</td></tr>`).join("");
 
   $("dash").innerHTML = `
@@ -111,6 +125,12 @@ function render() {
         <p class="when" id="nextRun">${esc(fmtTime(upd.nextRun))} · ${esc(until(upd.nextRun))}</p>
         <p>Every hour at :${esc(upd.cron.split(" ")[0].padStart(2, "0"))} UTC (<code>${esc(upd.cron)}</code>). Queues any mod whose Workshop copy changed.</p>
         <p>Last run: ${lastRun(upd.lastRun)}</p>
+      </div>
+      <div class="card">
+        <h3>Marketplace prices</h3>
+        <p class="when" id="nextMarket">${esc(fmtTime(nextMarketRun()))} · ${esc(until(nextMarketRun()))}</p>
+        <p>Every hour at :${String(marketMinute).padStart(2, "0")} UTC. Records every listing of each enabled marketplace.</p>
+        <p>Last run: ${lastRun(d.runs.find(r => r.kind === "market"))}</p>
       </div>
     </section>
     <section class="panel">
@@ -142,10 +162,72 @@ async function loadLog(id) {
   } catch (e) { pre.textContent = e.message; }
 }
 
+// ---- marketplaces (own section: the 10-second redraw of #dash mustn't wipe the form)
+let marketMinute = 47, markets = [], confirmDelete = null;
+function nextMarketRun() {
+  const t = new Date(); t.setUTCSeconds(0, 0); t.setUTCMinutes(marketMinute);
+  if (t <= new Date()) t.setUTCHours(t.getUTCHours() + 1);
+  return t;
+}
+function renderMarkets() {
+  $("marketCount").textContent = markets.length;
+  if (!markets.length) { $("marketTable").innerHTML = `<p class="empty muted">No marketplaces yet. Add one above.</p>`; return; }
+  $("marketTable").innerHTML = `<table class="grid"><thead><tr><th>Marketplace</th><th>Status</th><th>Last snapshot</th>
+      <th>Listings now</th><th>Items priced</th><th>Prices recorded</th><th></th></tr></thead><tbody>${markets.map(m => `<tr>
+      <td><b>${esc(m.name)}</b><span class="sub" title="${esc(m.url)}">${esc(m.url.length > 70 ? m.url.slice(0, 70) + "…" : m.url)}</span>
+        <span class="sub">Added ${esc(fmtTime(m.createdAt))}${m.addedBy ? " by " + esc(m.addedBy) : ""}</span></td>
+      <td>${m.enabled ? (m.lastError ? badge("failed") : m.lastCheckedAt ? badge("succeeded") : badge("queued")) : '<span class="badge skipped">Paused</span>'}
+        ${m.lastError ? `<span class="sub err">${esc(m.lastError)}</span>` : m.lastCheckedAt ? `<span class="sub">Checked ${esc(ago(m.lastCheckedAt))}</span>` : `<span class="sub">Waiting for the next run</span>`}</td>
+      <td>${m.lastSnapshotAt ? esc(fmtTime(m.lastSnapshotAt)) + `<span class="sub">${esc(ago(m.lastSnapshotAt))}</span>` : "—"}</td>
+      <td>${m.lastListings != null ? m.lastListings.toLocaleString() : "—"}</td>
+      <td>${m.items.toLocaleString()}</td><td>${m.history.toLocaleString()}</td>
+      <td class="acts"><button data-toggle="${esc(m.id)}" data-enabled="${m.enabled}">${m.enabled ? "Pause" : "Resume"}</button>
+        <button data-del="${esc(m.id)}" class="${confirmDelete === m.id ? "danger" : ""}">${confirmDelete === m.id ? "Delete its history?" : "Remove"}</button></td>
+    </tr>`).join("")}</tbody></table>`;
+}
+async function refreshMarkets() {
+  try {
+    const r = await getJson("/api/admin/markets");
+    markets = r.markets; marketMinute = r.checkMinute;
+    $("marketPanel").hidden = false;
+    renderMarkets();
+  } catch { /* not an admin: the overview shows why */ }
+}
+$("marketForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  $("mAdd").disabled = true; $("mNote").classList.remove("err");
+  $("mNote").textContent = "Checking the address…";
+  try {
+    const m = await getJson("/api/admin/markets", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("mName").value, url: $("mUrl").value }) });
+    $("mNote").textContent = `Added ${m.name}: it answered with ${m.total != null ? m.total.toLocaleString() + " listings" : "listings"}` +
+      (m.sample.length ? `, e.g. ${m.sample.map(x => `${x.full_type} at ${x.price}`).join(", ")}` : "") + ". Prices appear after the next market run.";
+    $("mName").value = ""; $("mUrl").value = "";
+    await refreshMarkets();
+  } catch (e) {
+    $("mNote").textContent = e.message; $("mNote").classList.add("err");
+  } finally { $("mAdd").disabled = false; }
+});
+$("marketTable").addEventListener("click", async ev => {
+  const t = ev.target.closest("[data-toggle]"), d = ev.target.closest("[data-del]");
+  try {
+    if (t) {
+      await getJson(`/api/admin/markets/${t.dataset.toggle}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: t.dataset.enabled !== "true" }) });
+    } else if (d) {
+      if (confirmDelete !== d.dataset.del) { confirmDelete = d.dataset.del; return renderMarkets(); }
+      confirmDelete = null;
+      await getJson(`/api/admin/markets/${d.dataset.del}`, { method: "DELETE" });
+    } else return;
+    await refreshMarkets();
+  } catch (e) { $("updated").textContent = e.message; }
+});
+
 async function refresh() {
   try {
     data = await getJson("/api/admin/overview");
     render();
+    refreshMarkets();
   } catch (e) {
     if (e.status === 401) return message(`Sign in to see the dashboard. Use <b>Log in with Discord</b> at the top right, then come back here.`);
     if (e.status === 403) return message("Admins only. Your account doesn't have access to this page.");
@@ -173,7 +255,10 @@ $("dash").addEventListener("click", async ev => {
   }
 });
 $("btnRefresh").addEventListener("click", refresh);
-setInterval(() => { if (data && $("nextRun")) $("nextRun").textContent = `${fmtTime(data.schedule.updates.nextRun)} · ${until(data.schedule.updates.nextRun)}`; }, 1000);
+setInterval(() => {
+  if (data && $("nextRun")) $("nextRun").textContent = `${fmtTime(data.schedule.updates.nextRun)} · ${until(data.schedule.updates.nextRun)}`;
+  if ($("nextMarket")) $("nextMarket").textContent = `${fmtTime(nextMarketRun())} · ${until(nextMarketRun())}`;
+}, 1000);
 
 (async () => {
   let me = null;
