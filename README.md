@@ -38,9 +38,15 @@ Browser ──► Azure Container Apps (one container, one origin)
   `<app>-market` job reads every page and stores each listing once per price (`market_listings`). Each account
   picks a marketplace (`user_marketplaces`, RLS) and the item list gets **Avg / Low / High** columns, sortable,
   for items whose full type is exactly a library item. Prices are per item.
+- **Stockroom inventory** (`server/stockroom.js`, migration 007): when a mod with Stockroom is in the setup (found
+  by its files or its mod.info id `Stockroom`), the avatar menu has **Stockroom**. Users import their Stockroom save
+  (`%USERPROFILE%\Zomboid\Lua\Stockroom`); the editor decodes it and saves only each character's item totals to
+  the account (`stockroom_characters`, RLS). The view lists every item with quantity, Avg / Low / High market price
+  and value (quantity × average), sortable and searchable.
 - **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
   `ADMIN_DISCORD_IDS`. Shows the queue, when the importer and the hourly update check run next and last, every
-  finished import with its worker log, and each importer run (`importer_runs`). Failed imports can be retried.
+  finished import with its worker log, and each importer run (`importer_runs`). Every mod whose latest import
+  failed is listed with Retry and Retry all; admins also get Retry on failed imports in the editor's Mods dialog.
   Everyone else gets 403; the account menu at the top right links there for admins only.
 - Signed out, the editor still works and keeps edits (and the chosen mods) in that browser only.
 

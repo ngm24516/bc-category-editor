@@ -108,6 +108,12 @@ describe("mod search", () => {
     assert.deepEqual(base.features, []);
   });
 
+  test("a mod whose mod.info id is Stockroom has the stockroom feature, even with no items", async () => {
+    await pool.query("UPDATE mod_versions SET mod_ids = '{Stockroom}' WHERE id = $1", [brita.versionId]);
+    const r = await (await api(null, "GET", `/api/catalog/mods?ids=${brita.modId}`)).json();
+    assert.deepEqual(r[0].features, ["stockroom"]);
+  });
+
   test("lookup by ids", async () => {
     const r = await (await api(null, "GET", `/api/catalog/mods?ids=${guns.modId},${brita.modId},junk`)).json();
     assert.equal(r.length, 2);

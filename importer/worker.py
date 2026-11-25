@@ -274,7 +274,7 @@ def process(conn, job, rules, props, work_dir):
         media = [m for mod in mods for m in mod["media"]]
         layer = build_layer(media, rules.get(), base_props=props,
                             mod_ids=[m["id"] for m in mods], workshop_ids=[ws])
-        features = detect_features(media)
+        features = detect_features(media, [m["id"] for m in mods])
         title = info.get("title") or job["title"] or mods[0]["name"]
         mod_id, version_id = write_version(conn, job, title, [m["id"] for m in mods], info.get("updated"), layer,
                                            features)

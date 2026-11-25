@@ -9,6 +9,7 @@ import { createAdminRouter } from "./admin.js";
 import { createCatalogRouter } from "./catalog.js";
 import { createImportsRouter } from "./imports.js";
 import { createMarketRouter } from "./market.js";
+import { createStockroomRouter } from "./stockroom.js";
 import { createSteam } from "./steam.js";
 import { createSetsRouter } from "./sets.js";
 
@@ -56,6 +57,7 @@ export function createApp({ pool, config, fetchImpl }) {
   });
   app.use("/api/catalog", createCatalogRouter({ pool }));
   app.use("/api/sets", createSetsRouter({ pool, requireUser: auth.requireUser }));
+  app.use("/api/stockroom", createStockroomRouter({ pool, requireUser: auth.requireUser }));
   app.use("/api", createMarketRouter({ pool, requireUser: auth.requireUser, config }));
   app.use("/api/admin", createAdminRouter({ pool, requireUser: auth.requireUser, config }));
   const steam = createSteam({ apiBase: config.steamApiBase, communityBase: config.steamCommunityBase, ...(fetchImpl ? { fetchImpl } : {}) });

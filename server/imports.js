@@ -36,7 +36,7 @@ async function usage(db) {
 }
 
 const ITEM_SQL = `
-  SELECT i.workshop_id, i.title, i.skipped, i.mod_id AS ready_mod, j.status AS job_status, j.error,
+  SELECT i.workshop_id, i.title, i.skipped, i.mod_id AS ready_mod, i.job_id, j.status AS job_status, j.error,
          j.mod_id AS job_mod, j.finished_at
     FROM import_request_items i LEFT JOIN import_jobs j ON j.id = i.job_id
    WHERE i.request_id = $1 ORDER BY i.title NULLS LAST, i.workshop_id`;
@@ -47,7 +47,7 @@ function itemJson(r) {
   else if (r.ready_mod) { status = "ready"; modId = r.ready_mod; }
   else if (r.job_status === "done") { status = r.job_mod ? "ready" : "failed"; modId = r.job_mod; }
   else status = r.job_status || "failed";
-  return { workshopId: r.workshop_id, title: r.title, status, modId,
+  return { workshopId: r.workshop_id, title: r.title, status, modId, jobId: r.job_id ? Number(r.job_id) : null,
     message: r.skipped || (status === "failed" ? (r.error || "No Build 42 items were found") : null) };
 }
 

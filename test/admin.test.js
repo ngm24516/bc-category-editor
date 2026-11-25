@@ -81,6 +81,21 @@ describe("admin dashboard", () => {
     assert.equal((await api(admin, "POST", `/api/admin/jobs/${bad.id}/retry`)).status, 409);
   });
 
+  test("failed list holds mods whose latest import failed; Retry all requeues them; admins only", async () => {
+    // An older failure that a later import fixed isn't listed.
+    await pool.query(`INSERT INTO import_jobs (workshop_id, reason, title, status, error, created_at, finished_at) VALUES
+      ('2200148443', 'request', 'Good mod', 'failed', 'old failure', now() - interval '1 day', now() - interval '1 day'),
+      ('2200148444', 'update', 'Another broken mod', 'failed', 'Steam timed out', now() - interval '2 hours', now() - interval '2 hours')`);
+    const o = await (await api(admin, "GET", "/api/admin/overview")).json();
+    assert.deepEqual(o.failed.map(j => j.title).sort(), ["Another broken mod", "Broken mod"]);
+    assert.equal((await api(alice, "POST", "/api/admin/jobs/retry-failed")).status, 403);
+    const r = await api(admin, "POST", "/api/admin/jobs/retry-failed");
+    assert.deepEqual(await r.json(), { queued: 2 });
+    const { rows } = await pool.query("SELECT workshop_id FROM import_jobs WHERE status = 'queued' ORDER BY workshop_id");
+    assert.deepEqual(rows.map(x => x.workshop_id), ["2200148440", "2200148442", "2200148444"]);
+    assert.deepEqual((await (await api(admin, "GET", "/api/admin/overview")).json()).failed, []);
+  });
+
   test("the /admin page is served", async () => {
     const r = await fetch(h.appUrl + "/admin");
     assert.equal(r.status, 200);

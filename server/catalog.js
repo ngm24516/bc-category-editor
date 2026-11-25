@@ -15,6 +15,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const IMMUTABLE = "public, max-age=31536000, immutable";
 const SEED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "seed", "vanilla");
 
+// mod.info ids that mean a feature even when the importer didn't spot it in the files (Stockroom's own
+// mod id; see importer/pzcatalog/features.py). Lower case. Applies to versions imported before detection, too.
+export const FEATURE_MOD_IDS = { stockroom: "stockroom" };
+const FEATURE_MOD_IDS_SQL = Object.entries(FEATURE_MOD_IDS).map(([id, f]) => `('${id}', '${f}')`).join(", ");
+
 // Newest version of each mod, with the fields the editor's mod list needs.
 const MOD_LIST_SQL = `
   SELECT m.id, m.kind, m.workshop_id, m.name, v.id AS version_id, v.label, v.item_count, v.features, v.created_at AS updated_at,
@@ -22,7 +27,12 @@ const MOD_LIST_SQL = `
     FROM mods m
     LEFT JOIN users u ON u.id = m.created_by
     LEFT JOIN LATERAL (
-      SELECT id, label, item_count, features, created_at FROM mod_versions WHERE mod_id = m.id ORDER BY created_at DESC LIMIT 1
+      SELECT id, label, item_count, created_at,
+             -- Features found in the files, plus ones a mod is known by its mod.info id for (see FEATURE_MOD_IDS).
+             ARRAY(SELECT DISTINCT f FROM unnest(features || ARRAY(
+               SELECT k.feature FROM unnest(mod_ids) AS i(id)
+                 JOIN (VALUES ${FEATURE_MOD_IDS_SQL}) AS k(mod_id, feature) ON lower(i.id) = k.mod_id)) AS f ORDER BY f) AS features
+        FROM mod_versions WHERE mod_id = m.id ORDER BY created_at DESC LIMIT 1
     ) v ON true`;
 
 export const modJson = r => ({
