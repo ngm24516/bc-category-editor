@@ -3,6 +3,7 @@
 //   GET  /api/admin/overview          counts, the queue, schedule, recent imports, importer runs
 //   GET  /api/admin/jobs/:id/log      the worker's log for one import
 //   POST /api/admin/jobs/:id/retry    put a failed import back in the queue
+//   POST /api/admin/jobs/retry-failed put every mod whose latest import failed back in the queue
 //
 // Shared tables only (jobs, runs, catalog): no per-user data, so no withUser() here.
 import express from "express";
@@ -32,6 +33,11 @@ const runJson = r => ({
   processed: r.processed, succeeded: r.succeeded, failed: r.failed, error: r.error,
 });
 
+// Ids of failed jobs that are still the latest job for their Workshop item (nothing newer queued, running or done).
+const LATEST_FAILED_SQL = `
+  SELECT id FROM (SELECT DISTINCT ON (workshop_id) id, status FROM import_jobs ORDER BY workshop_id, created_at DESC, id DESC) l
+   WHERE l.status = 'failed'`;
+
 const JOB_COLUMNS = `j.id, j.workshop_id, j.title, j.reason, j.status, j.error, j.attempts, j.created_at, j.started_at,
   j.finished_at, j.log IS NOT NULL AS has_log, u.username, u.display_name, m.name AS mod_name
   FROM import_jobs j LEFT JOIN users u ON u.id = j.requested_by LEFT JOIN mods m ON m.id = j.mod_id`;
@@ -43,9 +49,13 @@ export function createAdminRouter({ pool, requireUser, config }) {
     next();
   });
   const run = h => (req, res, next) => Promise.resolve(h(req, res)).catch(next);
+  const requeue = async id => (await pool.query(
+    `UPDATE import_jobs SET status = 'queued', error = NULL, attempts = 0, started_at = NULL, finished_at = NULL,
+                            log = NULL, run_id = NULL, created_at = now()
+      WHERE id = $1 AND status = 'failed'`, [id])).rowCount > 0;
 
   router.get("/overview", run(async (_req, res) => {
-    const [counts, queue, recent, runs, lastRuns] = await Promise.all([
+    const [counts, queue, recent, runs, lastRuns, failed] = await Promise.all([
       pool.query(`SELECT
           (SELECT count(*) FROM import_jobs WHERE status = 'queued')::int AS queued,
           (SELECT count(*) FROM import_jobs WHERE status = 'running')::int AS running,
@@ -60,6 +70,7 @@ export function createAdminRouter({ pool, requireUser, config }) {
       pool.query("SELECT * FROM importer_runs ORDER BY started_at DESC LIMIT 30"),
       pool.query(`SELECT DISTINCT ON (kind) kind, started_at, finished_at, status FROM importer_runs
                    ORDER BY kind, started_at DESC`),
+      pool.query(`SELECT ${JOB_COLUMNS} WHERE j.id IN (${LATEST_FAILED_SQL}) ORDER BY j.finished_at DESC LIMIT 500`),
     ]);
     const c = counts.rows[0];
     const last = Object.fromEntries(lastRuns.rows.map(r => [r.kind, runJson(r)]));
@@ -76,6 +87,7 @@ export function createAdminRouter({ pool, requireUser, config }) {
       queue: queue.rows.map(jobJson),
       recent: recent.rows.map(jobJson),
       runs: runs.rows.map(runJson),
+      failed: failed.rows.map(jobJson),
     });
   }));
 
@@ -86,14 +98,19 @@ export function createAdminRouter({ pool, requireUser, config }) {
     res.json({ log: j.log || "" });
   }));
 
+  router.post("/jobs/retry-failed", run(async (_req, res) => {
+    const { rows } = await pool.query(`SELECT id FROM import_jobs WHERE id IN (${LATEST_FAILED_SQL})`);
+    let queued = 0;
+    for (const { id } of rows) {
+      try { queued += (await requeue(id)) ? 1 : 0; } catch (err) { if (err.code !== "23505") throw err; }
+    }
+    res.json({ queued });
+  }));
+
   router.post("/jobs/:id/retry", run(async (req, res) => {
     if (!ID.test(req.params.id)) return res.status(404).json({ error: "not_found" });
     try {
-      const { rowCount } = await pool.query(
-        `UPDATE import_jobs SET status = 'queued', error = NULL, attempts = 0, started_at = NULL, finished_at = NULL,
-                                log = NULL, run_id = NULL, created_at = now()
-          WHERE id = $1 AND status = 'failed'`, [req.params.id]);
-      if (!rowCount) return res.status(409).json({ error: "not_failed", message: "Only failed imports can be retried" });
+      if (!(await requeue(req.params.id))) return res.status(409).json({ error: "not_failed", message: "Only failed imports can be retried" });
     } catch (err) {
       if (err.code === "23505") return res.status(409).json({ error: "already_queued", message: "That mod is already queued" });
       throw err;

@@ -104,6 +104,11 @@ class FeatureTests(unittest.TestCase):
             self.assertEqual(detect_features([plain, sr]), ["stockroom"])
             self.assertEqual(detect_features([os.path.join(d, "missing")]), [])
 
+    def test_stockroom_is_also_known_by_its_mod_id(self):
+        self.assertEqual(detect_features([], ["Stockroom"]), ["stockroom"])
+        self.assertEqual(detect_features([], ["stockroom", "Other"]), ["stockroom"])
+        self.assertEqual(detect_features([], ["StockroomAddon"]), [])
+
 
 if __name__ == "__main__":
     unittest.main()

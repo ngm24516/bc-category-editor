@@ -139,6 +139,16 @@ function render() {
         : `<p class="empty muted">Nothing is waiting.</p>`}
     </section>
     <section class="panel">
+      <h2>Failed imports <span class="n">${(d.failed || []).length}</span>
+        ${(d.failed || []).length ? `<span class="spacer"></span><button data-retryall="1">Retry all ${d.failed.length}</button>` : ""}</h2>
+      ${(d.failed || []).length ? `<table class="grid"><thead><tr><th>Failed</th><th>Mod</th><th>Reason</th><th>Requested by</th><th>Error</th><th></th></tr></thead><tbody>${d.failed.map(j => `<tr>
+          <td>${esc(fmtTime(j.finishedAt))}<span class="sub">${esc(ago(j.finishedAt))}</span></td>
+          <td>${modCell(j)}</td><td>${esc(REASON[j.reason] || j.reason)}</td><td>${esc(j.requestedBy || "Scheduled check")}</td>
+          <td class="err">${esc(j.error || "")}</td>
+          <td class="acts"><button data-retry="${j.id}">Retry</button></td></tr>`).join("")}</tbody></table>`
+        : `<p class="empty muted">No mod's latest import has failed.</p>`}
+    </section>
+    <section class="panel">
       <h2>Recent imports <span class="n">${d.recent.length}</span></h2>
       ${d.recent.length ? `<table class="grid"><thead><tr><th>Finished</th><th>Mod</th><th>Reason</th><th>Requested by</th><th>Result</th><th>Took</th><th>Error</th><th></th></tr></thead><tbody>${recentRows}</tbody></table>`
         : `<p class="empty muted">No imports have finished yet.</p>`}
@@ -239,7 +249,16 @@ async function refresh() {
 }
 
 $("dash").addEventListener("click", async ev => {
-  const logBtn = ev.target.closest("[data-log]"), retryBtn = ev.target.closest("[data-retry]");
+  const logBtn = ev.target.closest("[data-log]"), retryBtn = ev.target.closest("[data-retry]"), allBtn = ev.target.closest("[data-retryall]");
+  if (allBtn) {
+    allBtn.disabled = true;
+    try {
+      const r = await getJson("/api/admin/jobs/retry-failed", { method: "POST" });
+      $("updated").textContent = `Queued ${r.queued} import${r.queued === 1 ? "" : "s"} again`;
+      await refresh();
+    } catch (e) { allBtn.disabled = false; $("updated").textContent = e.message; }
+    return;
+  }
   if (logBtn) {
     const id = Number(logBtn.dataset.log);
     openLogs.has(id) ? openLogs.delete(id) : openLogs.add(id);
