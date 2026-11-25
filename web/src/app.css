@@ -339,23 +339,20 @@
 }
 
 @layer components {
-  /* Stockroom inventory (Stockroom in web/index.html) */
-  .modal .sr-box { @apply h-[min(860px,94vh)] w-[min(1100px,100%)]; }
-  .sr-head { @apply flex flex-wrap items-center gap-3; }
-  .sr-head select { @apply max-w-80; }
-  .sr-head .spacer { @apply flex-1; }
-  .sr-empty { @apply mx-auto flex max-w-xl flex-col gap-3 py-8; }
+  /* Stockroom page (web/stockroom.html) */
+  .stockroom header select { @apply max-w-80; }
+  .sr-meta { @apply flex flex-wrap items-baseline justify-between gap-2; }
+  .sr-market { @apply flex items-center gap-2 text-xs font-normal tracking-normal whitespace-nowrap normal-case; color: var(--muted); }
+  .sr-market select { @apply py-1 text-xs; }
+  .panel > h2 input[type="search"] { @apply w-64 py-1 text-xs font-normal; }
+  .panel > h2 button.danger { @apply text-white; background: var(--warn); border-color: var(--warn); }
+  .sr-note { @apply m-4 rounded-lg; }
+  .stockroom .cards .card .muted-note { @apply mt-1; }
+  .sr-empty { @apply mx-auto flex max-w-xl flex-col gap-3 px-4 py-10; }
   .sr-empty h3 { @apply m-0 text-base font-semibold; }
   .linkish { @apply inline border-0 bg-transparent p-0 font-medium underline shadow-none; color: var(--accent); }
   .linkish:hover:not(:disabled) { background: transparent; }
-  .sr-summary { @apply grid gap-3; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
-  .sr-summary .card { @apply p-3; }
-  .sr-summary .card .v { @apply text-xl; }
-  .sr-tools { @apply mt-3 flex flex-wrap items-center gap-3 text-xs; }
-  .sr-tools input { @apply w-72 text-sm; }
-  .sr-tools .spacer { @apply flex-1; }
-  .sr-tools button.danger { @apply text-white; background: var(--warn); border-color: var(--warn); }
-  .sr-table { @apply mt-3 overflow-hidden rounded-xl border; border-color: var(--line); }
+  .sr-table { @apply overflow-x-auto; }
   .sr-table table.grid th { @apply sticky top-0 z-10; }
   .sr-table table.grid td { @apply py-1.5 align-middle; }
   .sr-table table.grid td:first-child, .sr-table table.grid th:first-child { @apply w-10 pr-0; }
@@ -371,4 +368,5 @@
   .sr-table .sorter[data-dir="desc"]::after { content: "↓"; @apply opacity-100; }
   .sr-table .sorter[data-dir="asc"]::after { content: "↑"; @apply opacity-100; }
   .sr-table .nm1 { @apply block font-medium; }
+  .sr-table .ic { @apply block; }
 }

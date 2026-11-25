@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Stockroom · Better Containers Category Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+<script src="account-menu.js"></script>
+<script src="stockroom-codec.js"></script>
+</head>
+<body class="admin stockroom">
+<header>
+  <h1>Stockroom</h1>
+  <a class="back" href="/">← Back to the editor</a>
+  <div class="spacer"></div>
+  <select id="who" aria-label="Character" hidden></select>
+  <input type="file" id="fileIn" accept=".txt" multiple hidden>
+  <button id="btnImport" class="primary" hidden>Import Stockroom save…</button>
+  <div class="usermenu" id="userMenu" hidden></div>
+</header>
+<main class="dash">
+  <div class="dash-sections" id="page"><p class="muted">Loading…</p></div>
+</main>
+<div class="toast" id="toast" role="status"></div>
+<script>
+"use strict";
+// The user's Stockroom: what each of their characters has in their safehouse (imported from the Stockroom
+// mod's save files, decoded here; only item totals are saved, /api/stockroom), priced with the marketplace
+// they chose (/api/markets). Names and icons come from /api/catalog/lookup.
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const money = v => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+const FT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/;
+const FOLDER = "%USERPROFILE%\\Zomboid\\Lua\\Stockroom";
+
+let chars = [], cur = null, markets = [], choice = null, PRICES = null, LOOK = { items: {}, iconSets: {} };
+let sort = { key: "value", dir: -1 }, q = "";
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+  const d = r.status === 204 ? null : await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error((d && d.message) || `Request failed (${r.status})`), { status: r.status });
+  return d;
+}
+let toastTimer;
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 5000); }
+async function copyText(t) { try { await navigator.clipboard.writeText(t); toast("Copied the Stockroom folder path"); } catch { toast(t); } }
+
+function icon(ft, size = 28) {
+  const it = LOOK.items[ft], set = it && it.icon && LOOK.iconSets[it.icon[0]];
+  if (!set) return '<span class="ic none"></span>';
+  const t = it.icon[1], sheet = Math.floor(t / set.perSheet), k = t % set.perSheet;
+  return `<span class="ic" style="background-image:url(/api/catalog/versions/${esc(it.icon[0])}/icons/${sheet}.webp);background-size:${set.cols * size}px auto;` +
+    `background-position:-${(k % set.cols) * size}px -${Math.floor(k / set.cols) * size}px;width:${size}px;height:${size}px"></span>`;
+}
+
+// ---- loading
+async function loadPrices() {
+  PRICES = null;
+  if (choice) {
+    try { PRICES = new Map(Object.entries((await api("GET", `/api/markets/${encodeURIComponent(choice)}/prices`)).items)); } catch { /* no prices */ }
+  }
+}
+async function loadLookup() {
+  const c = chars.find(x => x.id === cur);
+  const fts = c ? Object.keys(c.items).filter(f => !(f in LOOK.items)) : [];
+  if (!fts.length) return;
+  try {
+    const r = await api("POST", "/api/catalog/lookup", { fullTypes: fts });
+    Object.assign(LOOK.items, r.items); Object.assign(LOOK.iconSets, r.iconSets);
+    for (const f of fts) if (!(f in LOOK.items)) LOOK.items[f] = null;
+  } catch { /* names fall back to the item type */ }
+}
+async function loadChars() {
+  chars = (await api("GET", "/api/stockroom")).characters;
+  if (!chars.some(c => c.id === cur)) cur = chars[0] ? chars[0].id : null;
+  await loadLookup();
+}
+
+// ---- drawing
+function empty() {
+  return `<section class="panel"><div class="sr-empty">
+    <h3>Your stockroom is empty</h3>
+    <p>Import your Stockroom save to see everything in your safehouse, with what each item is worth on the market.</p>
+    <ol>
+      <li>In the game, open Stockroom in your safehouse and let it scan your storage.</li>
+      <li>Press <b>Import Stockroom save…</b> (top right) and open <code class="mono">${esc(FOLDER)}</code>
+        (<button type="button" class="linkish" data-copy="1">copy the path</button>).</li>
+      <li>Select both files for your character, the ones ending in <span class="mono">-a.txt</span> and <span class="mono">-b.txt</span>. The newer one is used.</li>
+    </ol>
+    <p class="muted">Only the item counts are saved to your account. Import again any time to update.</p>
+    <div><button class="primary" data-import="1">Import Stockroom save…</button></div>
+  </div></section>`;
+}
+
+function render() {
+  const c = chars.find(x => x.id === cur);
+  $("btnImport").hidden = false;
+  $("who").hidden = chars.length < 2;
+  $("who").innerHTML = chars.map(x => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join("");
+  if (c) $("who").value = c.id;
+  if (!c) { $("page").innerHTML = empty(); return; }
+
+  const rows = Object.entries(c.items).map(([ft, n]) => {
+    const it = LOOK.items[ft], p = PRICES && PRICES.get(ft);
+    return { ft, n, known: !!it, name: it ? it.name : ft, p, value: p ? p[0] * n : null };
+  });
+  const priced = rows.filter(r => r.p);
+  const totalQty = rows.reduce((a, r) => a + r.n, 0);
+  const total = k => priced.reduce((a, r) => a + r.p[k] * r.n, 0);
+  const key = sort.key, dir = sort.dir;
+  const val = r => key === "name" ? r.name.toLowerCase() : key === "n" ? r.n : key === "value" ? r.value
+    : r.p ? r.p[{ avg: 0, low: 1, high: 2 }[key]] : null;
+  const needle = q.trim().toLowerCase();
+  const shown = rows.filter(r => !needle || r.name.toLowerCase().includes(needle) || r.ft.toLowerCase().includes(needle))
+    .sort((a, b) => {
+      const va = val(a), vb = val(b);
+      if (va == null || vb == null) return va == null ? (vb == null ? a.name.localeCompare(b.name) : 1) : -1;
+      return (typeof va === "string" ? va.localeCompare(vb) : va - vb) * dir;
+    });
+  const th = (k, label, cls = "") => `<th class="${cls}"><button class="sorter${key === k ? " on" : ""}" data-sort="${k}" data-dir="${key === k ? (dir < 0 ? "desc" : "asc") : ""}">${label}</button></th>`;
+  const card = (k, v, sub = "") => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="muted-note">${sub}</div>` : ""}</div>`;
+  const LIMIT = 2000;
+  const m = markets.find(x => x.id === choice);
+
+  $("page").innerHTML = `
+    <section class="sr-meta">
+      <div><b>${esc(c.label)}</b><span class="muted-note"> · save #${esc(c.sequence)} · imported ${esc(new Date(c.importedAt).toLocaleString())}</span></div>
+      <div class="muted-note">${(c.houses || []).map(h => `${esc(h.name)} (${h.containers} containers)`).join(" · ") || "No safehouse snapshot in this save"}</div>
+    </section>
+    <section class="cards" aria-label="Totals">
+      ${card("Item types", rows.length.toLocaleString())}
+      ${card("Items", totalQty.toLocaleString())}
+      ${card("Market value", PRICES ? money(Math.round(total(0))) : "–", PRICES ? `at average prices · ${money(Math.round(total(1)))} low – ${money(Math.round(total(2)))} high` : "")}
+      ${card("Priced", PRICES ? `${priced.length.toLocaleString()} / ${rows.length.toLocaleString()}` : "–", PRICES && m ? `from ${esc(m.name)}` : "")}
+    </section>
+    <section class="panel">
+      <h2>Inventory <span class="n">${shown.length.toLocaleString()}</span>
+        <span class="spacer"></span>
+        <input type="search" id="q" placeholder="Search your stockroom" value="${esc(q)}" aria-label="Search your stockroom">
+        <label class="sr-market">Prices from <select id="market"><option value="">No prices</option>${markets.map(x => `<option value="${esc(x.id)}"${x.id === choice ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
+        <button id="forget" title="Remove this character's inventory from your account">Forget this character</button>
+      </h2>
+      ${!PRICES ? `<p class="notice info show sr-note">${markets.length ? "Choose a marketplace under <b>Prices from</b> to see what each item is worth." : "No marketplace has been added yet, so there are no prices to show."}</p>` : ""}
+      <div class="sr-table"><table class="grid"><thead><tr><th></th>${th("name", "Item")}${th("n", "Qty", "num")}${th("avg", "Avg", "num")}${th("low", "Low", "num")}${th("high", "High", "num")}${th("value", "Value", "num")}</tr></thead><tbody>
+      ${shown.slice(0, LIMIT).map(r => `<tr><td>${icon(r.ft)}</td>
+        <td><span class="nm1">${esc(r.name)}</span><span class="sub mono">${esc(r.ft)}${r.known ? "" : " · not in the catalog"}</span></td>
+        <td class="num">${r.n.toLocaleString()}</td>
+        ${r.p ? `<td class="num" title="Average of ${r.p[3]} listing${r.p[3] === 1 ? "" : "s"}">${money(r.p[0])}</td><td class="num">${money(r.p[1])}</td><td class="num">${money(r.p[2])}</td><td class="num"><b>${money(Math.round(r.value))}</b></td>`
+          : `<td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td>`}</tr>`).join("")}
+      </tbody></table></div>
+      ${shown.length > LIMIT ? `<p class="empty muted">Showing ${LIMIT.toLocaleString()} of ${shown.length.toLocaleString()} item types. Search to narrow it down.</p>` : ""}
+      ${!shown.length ? `<p class="empty muted">Nothing matches that search.</p>` : ""}
+    </section>`;
+}
+
+function message(html) { $("page").innerHTML = `<div class="panel"><div class="empty">${html}</div></div>`; }
+
+// ---- importing
+async function importFiles(files) {
+  const byId = new Map(), errs = [];
+  for (const f of files) {
+    try {
+      const v = decodeStockroom(new Uint8Array(await f.arrayBuffer()));
+      if (!v || typeof v !== "object" || !v.houses) throw new Error("not a Stockroom save");
+      const id = String(v.identity || f.name), prev = byId.get(id);
+      if (!prev || (+v.sequence || 0) > (+prev.sequence || 0)) byId.set(id, v);
+    } catch (e) { errs.push(`${f.name}: ${e && e.message || e}`); }
+  }
+  if (!byId.size) return toast(`Those files aren't Stockroom saves${errs.length ? ` (${errs[0]})` : ""}.`);
+  const characters = [...byId.values()].map(v => ({
+    identity: String(v.identity || stockLabel(v)).slice(0, 300),
+    label: stockLabel(v).slice(0, 200),
+    sequence: Number.isSafeInteger(+v.sequence) ? +v.sequence : 0,
+    houses: Object.entries(v.houses || {}).filter(([, h]) => h && h.snapshot && h.snapshot.containers)
+      .map(([name, h]) => ({ name: String(name).slice(0, 120), containers: Object.keys(h.snapshot.containers).length })),
+    items: Object.fromEntries([...stockItems(v)].filter(([ft, n]) => FT.test(ft) && ft.length <= 200 && n >= 1).map(([ft, n]) => [ft, Math.min(1e9, Math.round(n))])),
+  }));
+  try {
+    const saved = (await api("PUT", "/api/stockroom", { characters })).characters;
+    cur = saved[0].id;
+    const noSnap = characters.filter(x => !x.houses.length).length;
+    toast(`Imported ${saved.map(x => x.label).join(", ")}${noSnap ? ". No safehouse snapshot yet: open Stockroom in your safehouse, let it scan, then import again." : "."}`);
+  } catch (e) { return toast(e.message); }
+  await loadChars(); render();
+}
+
+// ---- events
+$("btnImport").onclick = () => $("fileIn").click();
+$("fileIn").addEventListener("change", e => { const f = [...e.target.files]; e.target.value = ""; if (f.length) importFiles(f); });
+$("who").onchange = async () => { cur = $("who").value; await loadLookup(); render(); };
+$("page").addEventListener("click", async e => {
+  const s = e.target.closest("[data-sort]");
+  if (s) { const k = s.dataset.sort; sort = sort.key === k ? { key: k, dir: -sort.dir } : { key: k, dir: k === "name" ? 1 : -1 }; return render(); }
+  if (e.target.closest("[data-copy]")) return copyText(FOLDER);
+  if (e.target.closest("[data-import]")) return $("fileIn").click();
+  const f = e.target.closest("#forget");
+  if (f) {
+    const c = chars.find(x => x.id === cur); if (!c) return;
+    if (!f.dataset.sure) { f.dataset.sure = "1"; f.textContent = `Remove ${c.label}?`; f.classList.add("danger"); return; }
+    try { await api("DELETE", `/api/stockroom/${encodeURIComponent(c.id)}`); toast(`Removed ${c.label} from your stockroom.`); cur = null; } catch (err) { toast(err.message); }
+    await loadChars(); render();
+  }
+});
+$("page").addEventListener("input", e => {
+  if (e.target.id !== "q") return;
+  q = e.target.value; const pos = e.target.selectionStart;
+  render(); const n = $("q"); n.focus(); n.setSelectionRange(pos, pos);
+});
+$("page").addEventListener("change", async e => {
+  if (e.target.id !== "market") return;
+  choice = e.target.value || null;
+  try { await api("PUT", "/api/markets/choice", { marketplaceId: choice }); } catch (err) { toast(err.message); }
+  await loadPrices(); render();
+});
+
+(async () => {
+  let me = null;
+  try { me = await api("GET", "/api/me"); } catch { /* signed out */ }
+  AccountMenu.mount($("userMenu"), me, { items: [{ label: "Category editor", href: "/" }, { label: "Admin dashboard", href: "/admin", show: !!me && me.role === "admin" }] });
+  if (!me) return message("Sign in to see your stockroom. Use <b>Log in with Discord</b> at the top right.");
+  try {
+    const m = await api("GET", "/api/markets");
+    markets = m.markets; choice = m.choice;
+    await Promise.all([loadPrices(), loadChars()]);
+  } catch (e) { return message(esc(e.message)); }
+  render();
+})();
+</script>
+</body>
+</html>

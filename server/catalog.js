@@ -3,6 +3,7 @@
 //   GET /api/catalog/mods?q=text | ?ids=a,b   mods with their newest version (search or look up)
 //   GET /api/catalog/versions/:id             items + category names + icon layout of one version
 //   GET /api/catalog/versions/:id/icons/:n.webp
+//   POST /api/catalog/lookup  { fullTypes } -> names and icons for those items (the Stockroom page)
 //
 // A version never changes once written, so its responses are cached "forever" by browsers and in memory.
 import { readFile } from "node:fs/promises";
@@ -12,6 +13,7 @@ import { gunzipSync } from "node:zlib";
 import express from "express";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FULL_TYPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/;
 const IMMUTABLE = "public, max-age=31536000, immutable";
 const SEED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "seed", "vanilla");
 
@@ -94,6 +96,37 @@ export function createCatalogRouter({ pool }) {
     }
     res.setHeader("Cache-Control", IMMUTABLE);
     res.type("application/json").send(body);
+  }));
+
+  // Names and icons for a list of item types, for pages that don't load the whole catalog (Stockroom).
+  // The base game's name wins when there is one; the icon comes from any newest mod version that draws it.
+  router.post("/lookup", run(async (req, res) => {
+    const list = req.body?.fullTypes;
+    if (!Array.isArray(list) || list.length > 20000 || list.some(f => typeof f !== "string" || f.length > 200 || !FULL_TYPE.test(f))) {
+      return res.status(400).json({ error: "invalid", message: "Send { fullTypes: [\"Base.Axe\", ...] } (at most 20000)" });
+    }
+    const { rows } = await pool.query(`
+      WITH want AS (SELECT DISTINCT unnest($1::text[]) AS ft),
+      latest AS (SELECT DISTINCT ON (mod_id) id, mod_id, created_at FROM mod_versions ORDER BY mod_id, created_at DESC),
+      pick AS (
+        SELECT DISTINCT ON (c.full_type) c.full_type, c.name, c.version_id, c.icon_tile, c.icon_name
+          FROM want w JOIN catalog_items c ON c.full_type = w.ft
+          JOIN latest l ON l.id = c.version_id JOIN mods m ON m.id = l.mod_id
+         ORDER BY c.full_type, (m.kind = 'base') DESC, (c.icon_tile >= 0) DESC, l.created_at DESC)
+      SELECT p.full_type, p.name,
+             CASE WHEN p.icon_tile >= 0 THEN p.version_id ELSE ic.version_id END AS icon_version,
+             CASE WHEN p.icon_tile >= 0 THEN p.icon_tile ELSE ic.icon_tile END AS icon_tile
+        FROM pick p
+        LEFT JOIN LATERAL (
+          SELECT c2.version_id, c2.icon_tile FROM catalog_items c2 JOIN latest l2 ON l2.id = c2.version_id
+           WHERE p.icon_tile < 0 AND p.icon_name <> '' AND c2.icon_name = p.icon_name AND c2.icon_tile >= 0 LIMIT 1) ic ON true`,
+    [list]);
+    const versions = [...new Set(rows.map(r => r.icon_version).filter(Boolean))];
+    const sets = versions.length ? (await pool.query("SELECT id, icons FROM mod_versions WHERE id = ANY($1)", [versions])).rows : [];
+    res.json({
+      iconSets: Object.fromEntries(sets.map(v => [v.id, { cols: v.icons.cols, perSheet: v.icons.perSheet }])),
+      items: Object.fromEntries(rows.map(r => [r.full_type, { name: r.name, icon: r.icon_version ? [r.icon_version, r.icon_tile] : null }])),
+    });
   }));
 
   router.get("/versions/:id/icons/:sheet.webp", run(async (req, res) => {

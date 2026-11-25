@@ -60,6 +60,12 @@ describe("stockroom", () => {
     assert.equal((await api(alice, "DELETE", "/api/stockroom/nope")).status, 404);
   });
 
+  test("the /stockroom page is served", async () => {
+    const r = await api(null, "GET", "/stockroom");
+    assert.equal(r.status, 200);
+    assert.match(await r.text(), /<h1>Stockroom<\/h1>/);
+  });
+
   test("at most 20 characters per user", async () => {
     const many = Array.from({ length: 21 }, (_, i) => character({ identity: `s|w|c${i}`, label: `c${i}` }));
     assert.equal((await api(alice, "PUT", "/api/stockroom", { characters: many })).status, 400);
