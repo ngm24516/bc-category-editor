@@ -32,7 +32,9 @@
     </form>
     <p class="muted-note market-note" id="mNote">The address is checked first: it must answer with a <code>listings</code> list whose items have
       <code>listing_id</code>, <code>full_type</code> and <code>price</code>. The market job then reads every page each hour; prices are per item,
-      and only items in the library get a price. Everyone can pick an enabled marketplace in the editor.</p>
+      and only items in the library get a price. Everyone can pick an enabled marketplace in the editor.
+      <b>Ignore overpriced</b> leaves listings out of the prices (they stay recorded): at or above a placeholder price ("not for sale"), or over
+      that many times the item's median price (when it has at least 3 listings and the price is at least 100). Use 0 to turn that rule off.</p>
     <div id="marketTable"></div>
   </section>
 </main>
@@ -183,7 +185,7 @@ function renderMarkets() {
   $("marketCount").textContent = markets.length;
   if (!markets.length) { $("marketTable").innerHTML = `<p class="empty muted">No marketplaces yet. Add one above.</p>`; return; }
   $("marketTable").innerHTML = `<table class="grid"><thead><tr><th>Marketplace</th><th>Status</th><th>Last snapshot</th>
-      <th>Listings now</th><th>Items priced</th><th>Prices recorded</th><th></th></tr></thead><tbody>${markets.map(m => `<tr>
+      <th>Listings now</th><th>Items priced</th><th>Prices recorded</th><th>Ignore overpriced</th><th></th></tr></thead><tbody>${markets.map(m => `<tr>
       <td><b>${esc(m.name)}</b><span class="sub" title="${esc(m.url)}">${esc(m.url.length > 70 ? m.url.slice(0, 70) + "…" : m.url)}</span>
         <span class="sub">Added ${esc(fmtTime(m.createdAt))}${m.addedBy ? " by " + esc(m.addedBy) : ""}</span></td>
       <td>${m.enabled ? (m.lastError ? badge("failed") : m.lastCheckedAt ? badge("succeeded") : badge("queued")) : '<span class="badge skipped">Paused</span>'}
@@ -191,6 +193,9 @@ function renderMarkets() {
       <td>${m.lastSnapshotAt ? esc(fmtTime(m.lastSnapshotAt)) + `<span class="sub">${esc(ago(m.lastSnapshotAt))}</span>` : "—"}</td>
       <td>${m.lastListings != null ? m.lastListings.toLocaleString() : "—"}</td>
       <td>${m.items.toLocaleString()}</td><td>${m.history.toLocaleString()}</td>
+      <td class="rules"><label>at or above <input type="number" min="1" step="1" data-ignore="${esc(m.id)}" value="${m.ignoreAt ?? ""}" placeholder="no limit"></label>
+        <label>over <input type="number" min="0" max="1000" step="1" data-factor="${esc(m.id)}" value="${m.outlierFactor ?? 0}">× the item's median</label>
+        <button data-rules="${esc(m.id)}">Save</button></td>
       <td class="acts"><button data-toggle="${esc(m.id)}" data-enabled="${m.enabled}">${m.enabled ? "Pause" : "Resume"}</button>
         <button data-del="${esc(m.id)}" class="${confirmDelete === m.id ? "danger" : ""}">${confirmDelete === m.id ? "Delete its history?" : "Remove"}</button></td>
     </tr>`).join("")}</tbody></table>`;
@@ -200,7 +205,8 @@ async function refreshMarkets() {
     const r = await getJson("/api/admin/markets");
     markets = r.markets; marketMinute = r.checkMinute;
     $("marketPanel").hidden = false;
-    renderMarkets();
+    // Don't redraw under someone typing a rule value; the next refresh will.
+    if (!$("marketTable").contains(document.activeElement) || document.activeElement.tagName !== "INPUT") renderMarkets();
   } catch { /* not an admin: the overview shows why */ }
 }
 $("marketForm").addEventListener("submit", async ev => {
@@ -219,7 +225,18 @@ $("marketForm").addEventListener("submit", async ev => {
   } finally { $("mAdd").disabled = false; }
 });
 $("marketTable").addEventListener("click", async ev => {
-  const t = ev.target.closest("[data-toggle]"), d = ev.target.closest("[data-del]");
+  const t = ev.target.closest("[data-toggle]"), d = ev.target.closest("[data-del]"), rules = ev.target.closest("[data-rules]");
+  if (rules) {
+    const id = rules.dataset.rules, cell = rules.closest("td");
+    const ia = cell.querySelector("[data-ignore]").value.trim(), fa = Number(cell.querySelector("[data-factor]").value || 0);
+    try {
+      await getJson(`/api/admin/markets/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ignoreAt: ia === "" ? null : Number(ia), outlierFactor: fa }) });
+      $("updated").textContent = "Saved. Prices use the new rules right away.";
+      await refreshMarkets();
+    } catch (e) { $("updated").textContent = e.message; }
+    return;
+  }
   try {
     if (t) {
       await getJson(`/api/admin/markets/${t.dataset.toggle}`, { method: "PATCH", headers: { "Content-Type": "application/json" },

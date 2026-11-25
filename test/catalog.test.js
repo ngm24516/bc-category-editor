@@ -138,6 +138,11 @@ describe("mod search", () => {
     assert.deepEqual(r.items["Mod.Hatchet"].icon && r.iconSets[r.items["Mod.Hatchet"].icon[0]] ? "found" : "none", "found", "icon borrowed by icon name");
     assert.equal(r.items["Nope.Missing"], undefined);
     for (const icon of Object.values(r.items).map(x => x.icon).filter(Boolean)) assert.ok(r.iconSets[icon[0]].cols > 0);
+    assert.deepEqual(r.atm, {}, "no economy mod yet");
+    const eco = await addMod("3728629828", "Server Economy", []);
+    await pool.query(`UPDATE mod_versions SET atm = '{"Base.Axe": 12, "Base.Other": 5}' WHERE id = $1`, [eco.versionId]);
+    const r2 = await (await api(null, "POST", "/api/catalog/lookup", { fullTypes: ["Base.Axe", "Mod.Hatchet"] })).json();
+    assert.deepEqual(r2.atm, { "Base.Axe": 12 }, "ATM values for the asked items only");
     assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: ["not an item"] })).status, 400);
     assert.equal((await api(null, "POST", "/api/catalog/lookup", {})).status, 400);
   });

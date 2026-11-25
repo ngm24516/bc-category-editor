@@ -38,14 +38,17 @@ Browser ──► Azure Container Apps (one container, one origin)
   `<app>-market` job reads every page and stores each listing once per price (`market_listings`). Each account
   picks a marketplace (`user_marketplaces`, RLS) and the item list gets **Avg / Low / High** columns over the
   whole history, plus **Now**: the cheapest listing in the last full read (`last_seen = last_crawl_at`) and its
-  owner. All sortable, for items whose full type is exactly a library item. Prices are per item.
+  owner. All sortable, for items whose full type is exactly a library item. Prices are per item. Overpriced
+  listings are left out when prices are read (kept in the history): at or above a placeholder price (99,999), or
+  over 10× the item's median (3+ listings, price ≥ 100); admins change both per marketplace (migration 011).
 - **Stockroom inventory** (`server/stockroom.js`, migration 007): when a mod with Stockroom is in the setup (found
   by its files or its mod.info id `Stockroom`), the avatar menu links to **/stockroom** (`web/stockroom.html`, its own
   page like `/admin`; names and icons via `POST /api/catalog/lookup`). Users import their Stockroom save
   (`%USERPROFILE%\Zomboid\Lua\Stockroom`); the page decodes it (`web/stockroom-codec.js`, shared with the
   editor's Stockroom books tool) and saves only each character's item totals to
   the account (`stockroom_characters`, RLS). The view lists every item with quantity, Avg / Low / High market price
-  and value (quantity × average), sortable and searchable.
+  and value (quantity × average), sortable and searchable; with an economy mod in the catalog, also the ATM price
+  per item and the total ATM payout (same ATM sell % as the editor).
 - **Weight and ATM columns:** every item shows its script `Weight` (the game's 1.0 when unset). When a mod with an
   ATM is in the setup (Server Economy: `HZEconomySellables.lua`, mod id `ServerEconomy`), an **ATM** column shows
   what the ATM pays for one: `baseValue` × the **ATM sell %** in the sidebar (the server's `SellValuePercent`,

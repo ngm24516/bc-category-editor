@@ -96,6 +96,35 @@ describe("marketplaces", () => {
     assert.equal(rows[0].n, 0, "without app.user_id set, no rows are visible");
   });
 
+  test("overpriced listings are left out: placeholder prices and far-above-median ones; admins can change the rules", async () => {
+    const { body: m } = await addMarket();
+    const { rows: [mod] } = await pool.query("INSERT INTO mods (kind, name) VALUES ('base', 'Project Zomboid') RETURNING id");
+    const { rows: [v] } = await pool.query(
+      `INSERT INTO mod_versions (mod_id, label, game_version, icons) VALUES ($1, 'b', '42', '{}') RETURNING id`, [mod.id]);
+    await pool.query(`INSERT INTO catalog_items (version_id, full_type, name) VALUES
+      ($1, 'Base.Leek', 'Leek'), ($1, 'Base.Journal', 'Journal'), ($1, 'Base.IDCard', 'ID Card'), ($1, 'Base.Seeds', 'Seeds')`, [v.id]);
+    await pool.query(`INSERT INTO market_listings (marketplace_id, listing_id, price, full_type, owner_name, last_seen) VALUES
+      ($1, 'k1', 1, 'Base.Leek', 'a', now()), ($1, 'k2', 1, 'Base.Leek', 'b', now()), ($1, 'k3', 2, 'Base.Leek', 'c', now()),
+      ($1, 'k4', 1000, 'Base.Leek', 'Stak', now()),
+      ($1, 'j1', 100, 'Base.Journal', 'x', now()), ($1, 'j2', 99999, 'Base.Journal', 'chuckey', now()),
+      ($1, 'i1', 99999, 'Base.IDCard', 'drmilkjug', now()),
+      ($1, 's1', 1, 'Base.Seeds', 'x', now()), ($1, 's2', 1, 'Base.Seeds', 'y', now()), ($1, 's3', 10, 'Base.Seeds', 'z', now())`, [m.id]);
+    await pool.query("UPDATE marketplaces SET last_crawl_at = (SELECT max(last_seen) FROM market_listings) WHERE id = $1", [m.id]);
+    let p = (await (await api(null, "GET", `/api/markets/${m.id}/prices`)).json()).items;
+    assert.deepEqual(p["Base.Leek"].slice(0, 4).concat(p["Base.Leek"][7]), [1.33, 1, 2, 3, 1], "1000 is over 10x the median of 1.5");
+    assert.deepEqual([p["Base.Journal"][0], p["Base.Journal"][7]], [100, 1], "99,999 is a placeholder");
+    assert.equal(p["Base.IDCard"], undefined, "only a placeholder listing: no price at all");
+    assert.deepEqual(p["Base.Seeds"].slice(0, 3), [4, 1, 10], "10 vs 1 is under the 100 floor: kept");
+    // Admins can change or turn off the rules; others can't.
+    assert.equal((await api(alice, "PATCH", `/api/admin/markets/${m.id}`, { ignoreAt: null })).status, 403);
+    assert.equal((await api(admin, "PATCH", `/api/admin/markets/${m.id}`, { ignoreAt: -1 })).status, 400);
+    assert.equal((await api(admin, "PATCH", `/api/admin/markets/${m.id}`, { outlierFactor: 1 })).status, 400);
+    const r = await (await api(admin, "PATCH", `/api/admin/markets/${m.id}`, { ignoreAt: null, outlierFactor: 0 })).json();
+    assert.deepEqual([r.ignoreAt, r.outlierFactor], [null, 0]);
+    p = (await (await api(null, "GET", `/api/markets/${m.id}/prices`)).json()).items;
+    assert.deepEqual([p["Base.Leek"][2], p["Base.Journal"][2], p["Base.IDCard"][0]], [1000, 99999, 99999], "rules off: everything counts");
+  });
+
   test("prices: average, low and high over every recorded listing price, library items only", async () => {
     const { body: m } = await addMarket();
     const { rows: [mod] } = await pool.query("INSERT INTO mods (kind, name) VALUES ('base', 'Project Zomboid') RETURNING id");
@@ -106,7 +135,7 @@ describe("marketplaces", () => {
       ($1, 'l1', 100, 'Base.Axe'), ($1, 'l1', 130, 'Base.Axe'), ($1, 'l2', 40, 'Base.Axe'),
       ($1, 'l3', 15, 'Base.Hammer'), ($1, 'l4', 999, 'Base.NotInTheLibrary')`, [m.id]);
     let p = await (await api(null, "GET", `/api/markets/${m.id}/prices`)).json();
-    assert.deepEqual(p.items, { "Base.Axe": [90, 40, 130, 3, null, null, null], "Base.Hammer": [15, 15, 15, 1, null, null, null] },
+    assert.deepEqual(p.items, { "Base.Axe": [90, 40, 130, 3, null, null, null, 0], "Base.Hammer": [15, 15, 15, 1, null, null, null, 0] },
       "no full read yet: no current price");
     // A full read at time T: l1 (130, Bob) and l2 is gone; l5 (110, Alice) is new. Current lowest = 110 by Alice.
     await pool.query("UPDATE marketplaces SET last_crawl_at = '2026-11-25T00:00:00.123456Z' WHERE id = $1", [m.id]);
@@ -115,8 +144,8 @@ describe("marketplaces", () => {
     await pool.query(`INSERT INTO market_listings (marketplace_id, listing_id, price, full_type, owner_name, shop_name, last_seen)
                       VALUES ($1, 'l5', 110, 'Base.Axe', 'Alice', 'Alice''s', '2026-11-25T00:00:00.123456Z')`, [m.id]);
     p = await (await api(null, "GET", `/api/markets/${m.id}/prices`)).json();
-    assert.deepEqual(p.items["Base.Axe"], [95, 40, 130, 4, 110, "Alice", "Alice's"]);
-    assert.deepEqual(p.items["Base.Hammer"].slice(4), [null, null, null], "not listed now");
+    assert.deepEqual(p.items["Base.Axe"], [95, 40, 130, 4, 110, "Alice", "Alice's", 0]);
+    assert.deepEqual(p.items["Base.Hammer"].slice(4), [null, null, null, 0], "not listed now");
     await api(admin, "PATCH", `/api/admin/markets/${m.id}`, { enabled: false });
     assert.equal((await api(null, "GET", `/api/markets/${m.id}/prices`)).status, 404, "a disabled marketplace isn't served");
     const list = await (await api(admin, "GET", "/api/admin/markets")).json();

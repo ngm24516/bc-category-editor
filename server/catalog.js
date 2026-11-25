@@ -3,7 +3,7 @@
 //   GET /api/catalog/mods?q=text | ?ids=a,b   mods with their newest version (search or look up)
 //   GET /api/catalog/versions/:id             items + category names + icon layout of one version
 //   GET /api/catalog/versions/:id/icons/:n.webp
-//   POST /api/catalog/lookup  { fullTypes } -> names and icons for those items (the Stockroom page)
+//   POST /api/catalog/lookup  { fullTypes } -> names, icons and ATM values for those items (the Stockroom page)
 //
 // A version never changes once written, so its responses are cached "forever" by browsers and in memory.
 import { readFile } from "node:fs/promises";
@@ -125,11 +125,19 @@ export function createCatalogRouter({ pool }) {
           SELECT c2.version_id, c2.icon_tile FROM catalog_items c2 JOIN latest l2 ON l2.id = c2.version_id
            WHERE p.icon_tile < 0 AND p.icon_name <> '' AND c2.icon_name = p.icon_name AND c2.icon_tile >= 0 LIMIT 1) ic ON true`,
     [list]);
+    // ATM sell values (baseValue) from economy mods' newest versions; a newer mod's value wins.
+    const atm = (await pool.query(
+      `SELECT DISTINCT ON (k) k AS full_type, (v.atm ->> k)::numeric AS value
+         FROM (SELECT DISTINCT ON (mod_id) id, atm, created_at FROM mod_versions ORDER BY mod_id, created_at DESC) v,
+              LATERAL jsonb_object_keys(v.atm) AS k
+        WHERE v.atm IS NOT NULL AND k = ANY($1::text[])
+        ORDER BY k, v.created_at DESC`, [list])).rows;
     const versions = [...new Set(rows.map(r => r.icon_version).filter(Boolean))];
     const sets = versions.length ? (await pool.query("SELECT id, icons FROM mod_versions WHERE id = ANY($1)", [versions])).rows : [];
     res.json({
       iconSets: Object.fromEntries(sets.map(v => [v.id, { cols: v.icons.cols, perSheet: v.icons.perSheet }])),
       items: Object.fromEntries(rows.map(r => [r.full_type, { name: r.name, icon: r.icon_version ? [r.icon_version, r.icon_tile] : null }])),
+      atm: Object.fromEntries(atm.map(r => [r.full_type, Number(r.value)])),
     });
   }));
 

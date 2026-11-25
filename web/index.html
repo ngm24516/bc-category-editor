@@ -430,7 +430,7 @@ function priceCells(ft) {
   const p = PRICES && PRICES.get(ft);
   if (!p) return '<div class="cell col-price muted">–</div><div class="cell col-price col-lh muted">–</div><div class="cell col-price col-lh muted">–</div>' +
     '<div class="cell col-price col-lh muted">–</div>';
-  const n = p[3] + (p[3] === 1 ? " listing" : " listings");
+  const n = p[3] + (p[3] === 1 ? " listing" : " listings") + (p[7] ? " (" + p[7] + " overpriced ignored)" : "");
   // p[4..6]: the cheapest listing right now (last market read), its owner and shop; null when none is listed now.
   const now = p[4] == null ? '<div class="cell col-price col-lh col-now muted" title="Not listed right now">–</div>'
     : '<div class="cell col-price col-lh col-now" title="Cheapest now: ' + esc(money(p[4])) + (p[5] ? " from " + esc(p[5]) : "") + (p[6] ? " at " + esc(p[6]) : "") + '">' +
