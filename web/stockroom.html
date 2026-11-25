@@ -30,14 +30,20 @@
 "use strict";
 // The user's Stockroom: what each of their characters has in their safehouse (imported from the Stockroom
 // mod's save files, decoded here; only item totals are saved, /api/stockroom), priced with the marketplace
-// they chose (/api/markets). Names and icons come from /api/catalog/lookup.
+// they chose (/api/markets) and, when an economy mod has an ATM, what it pays. Names, icons and ATM values
+// come from /api/catalog/lookup.
 const $ = id => document.getElementById(id);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const money = v => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const FT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/;
 const FOLDER = "%USERPROFILE%\\Zomboid\\Lua\\Stockroom";
 
-let chars = [], cur = null, markets = [], choice = null, PRICES = null, LOOK = { items: {}, iconSets: {} };
+let chars = [], cur = null, markets = [], choice = null, PRICES = null, LOOK = { items: {}, iconSets: {}, atm: {} };
+// Server Economy's ATM pays baseValue × this percent (the server's SellValuePercent); shared with the editor.
+const ATM_KEY = "bcedit.atmpct.v1";
+let atmPct = 25;
+try { const v = localStorage.getItem(ATM_KEY); if (v !== null && Number(v) >= 0 && Number(v) <= 1000) atmPct = Number(v); } catch { /* storage unavailable */ }
+const atmPrice = ft => (ft in LOOK.atm ? LOOK.atm[ft] * atmPct / 100 : null);
 let sort = { key: "value", dir: -1 }, q = "";
 
 async function api(method, url, body) {
@@ -71,7 +77,7 @@ async function loadLookup() {
   if (!fts.length) return;
   try {
     const r = await api("POST", "/api/catalog/lookup", { fullTypes: fts });
-    Object.assign(LOOK.items, r.items); Object.assign(LOOK.iconSets, r.iconSets);
+    Object.assign(LOOK.items, r.items); Object.assign(LOOK.iconSets, r.iconSets); Object.assign(LOOK.atm, r.atm || {});
     for (const f of fts) if (!(f in LOOK.items)) LOOK.items[f] = null;
   } catch { /* names fall back to the item type */ }
 }
@@ -107,13 +113,16 @@ function render() {
 
   const rows = Object.entries(c.items).map(([ft, n]) => {
     const it = LOOK.items[ft], p = PRICES && PRICES.get(ft);
-    return { ft, n, known: !!it, name: it ? it.name : ft, p, value: p ? p[0] * n : null };
+    const atm = atmPrice(ft);
+    return { ft, n, known: !!it, name: it ? it.name : ft, p, value: p ? p[0] * n : null, atm, atmTotal: atm == null ? null : atm * n };
   });
+  const hasAtm = rows.some(r => r.atm != null);
+  const atmTotal = rows.reduce((a, r) => a + (r.atmTotal || 0), 0);
   const priced = rows.filter(r => r.p);
   const totalQty = rows.reduce((a, r) => a + r.n, 0);
   const total = k => priced.reduce((a, r) => a + r.p[k] * r.n, 0);
   const key = sort.key, dir = sort.dir;
-  const val = r => key === "name" ? r.name.toLowerCase() : key === "n" ? r.n : key === "value" ? r.value
+  const val = r => key === "name" ? r.name.toLowerCase() : key === "n" ? r.n : key === "value" ? r.value : key === "atm" ? r.atm
     : r.p ? r.p[{ avg: 0, low: 1, high: 2 }[key]] : null;
   const needle = q.trim().toLowerCase();
   const shown = rows.filter(r => !needle || r.name.toLowerCase().includes(needle) || r.ft.toLowerCase().includes(needle))
@@ -137,19 +146,22 @@ function render() {
       ${card("Items", totalQty.toLocaleString())}
       ${card("Market value", PRICES ? money(Math.round(total(0))) : "–", PRICES ? `at average prices · ${money(Math.round(total(1)))} low – ${money(Math.round(total(2)))} high` : "")}
       ${card("Priced", PRICES ? `${priced.length.toLocaleString()} / ${rows.length.toLocaleString()}` : "–", PRICES && m ? `from ${esc(m.name)}` : "")}
+      ${hasAtm ? card("ATM payout", money(Math.round(atmTotal)), `selling everything the ATM buys, at ${esc(atmPct)}%`) : ""}
     </section>
     <section class="panel">
       <h2>Inventory <span class="n">${shown.length.toLocaleString()}</span>
         <span class="spacer"></span>
         <input type="search" id="q" placeholder="Search your stockroom" value="${esc(q)}" aria-label="Search your stockroom">
+        ${hasAtm ? `<label class="sr-market" title="Server Economy's ATM pays each item's value × this percent: your server's SellValuePercent (25 by default)">ATM sell % <input type="number" id="atmPct" min="0" max="1000" step="1" value="${esc(atmPct)}"></label>` : ""}
         <label class="sr-market">Prices from <select id="market"><option value="">No prices</option>${markets.map(x => `<option value="${esc(x.id)}"${x.id === choice ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
         <button id="forget" title="Remove this character's inventory from your account">Forget this character</button>
       </h2>
       ${!PRICES ? `<p class="notice info show sr-note">${markets.length ? "Choose a marketplace under <b>Prices from</b> to see what each item is worth." : "No marketplace has been added yet, so there are no prices to show."}</p>` : ""}
-      <div class="sr-table"><table class="grid"><thead><tr><th></th>${th("name", "Item")}${th("n", "Qty", "num")}${th("avg", "Avg", "num")}${th("low", "Low", "num")}${th("high", "High", "num")}${th("value", "Value", "num")}</tr></thead><tbody>
+      <div class="sr-table"><table class="grid"><thead><tr><th></th>${th("name", "Item")}${th("n", "Qty", "num")}${hasAtm ? th("atm", "ATM", "num") : ""}${th("avg", "Avg", "num")}${th("low", "Low", "num")}${th("high", "High", "num")}${th("value", "Value", "num")}</tr></thead><tbody>
       ${shown.slice(0, LIMIT).map(r => `<tr><td>${icon(r.ft)}</td>
         <td><span class="nm1">${esc(r.name)}</span><span class="sub mono">${esc(r.ft)}${r.known ? "" : " · not in the catalog"}</span></td>
         <td class="num">${r.n.toLocaleString()}</td>
+        ${hasAtm ? (r.atm == null ? '<td class="num muted">–</td>' : `<td class="num" title="Value ${money(LOOK.atm[r.ft])} × ${esc(atmPct)}% · ${money(r.atmTotal)} for all ${r.n.toLocaleString()}">${money(r.atm)}</td>`) : ""}
         ${r.p ? `<td class="num" title="Average of ${r.p[3]} listing${r.p[3] === 1 ? "" : "s"}">${money(r.p[0])}</td><td class="num">${money(r.p[1])}</td><td class="num">${money(r.p[2])}</td><td class="num"><b>${money(Math.round(r.value))}</b></td>`
           : `<td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td>`}</tr>`).join("")}
       </tbody></table></div>
@@ -212,6 +224,13 @@ $("page").addEventListener("input", e => {
   render(); const n = $("q"); n.focus(); n.setSelectionRange(pos, pos);
 });
 $("page").addEventListener("change", async e => {
+  if (e.target.id === "atmPct") {
+    const v = Number(e.target.value);
+    if (!(v >= 0 && v <= 1000)) return;
+    atmPct = v;
+    try { localStorage.setItem(ATM_KEY, String(v)); } catch { /* storage unavailable */ }
+    return render();
+  }
   if (e.target.id !== "market") return;
   choice = e.target.value || null;
   try { await api("PUT", "/api/markets/choice", { marketplaceId: choice }); } catch (err) { toast(err.message); }

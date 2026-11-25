@@ -64,7 +64,7 @@
   button.primary:hover:not(:disabled) { @apply bg-indigo-500; }
   button.danger { color: var(--warn); }
   button:disabled { @apply cursor-default opacity-45; }
-  input[type="text"], input[type="search"], input[type="url"], select {
+  input[type="text"], input[type="search"], input[type="url"], input[type="number"], select {
     @apply w-full rounded-lg border px-3 py-1.5 shadow-xs transition-colors;
     border-color: var(--line); background: var(--panel);
   }
@@ -310,6 +310,10 @@
   .market-add input { @apply text-sm font-normal tracking-normal normal-case; color: var(--ink); }
   .market-note { @apply px-4 pt-2 pb-4 leading-relaxed; }
   .market-note.err, table.grid .sub.err { color: var(--warn); }
+  table.grid td.rules { @apply text-xs whitespace-nowrap; color: var(--muted); }
+  table.grid td.rules label { @apply mb-1 flex items-center gap-1.5; }
+  table.grid td.rules input { @apply w-20 px-1.5 py-0.5 text-xs; }
+  table.grid td.rules button { @apply px-2 py-0.5 text-xs; }
   table.grid td.acts button.danger { @apply text-white; background: var(--warn); border-color: var(--warn); }
   .admin header .back { @apply text-sm font-medium; }
   .cards { @apply grid gap-3; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
@@ -348,6 +352,7 @@
   .sr-meta { @apply flex flex-wrap items-baseline justify-between gap-2; }
   .sr-market { @apply flex items-center gap-2 text-xs font-normal tracking-normal whitespace-nowrap normal-case; color: var(--muted); }
   .sr-market select { @apply py-1 text-xs; }
+  .sr-market input { @apply w-16 py-1 text-xs; }
   .panel > h2 input[type="search"] { @apply w-64 py-1 text-xs font-normal; }
   .panel > h2 button.danger { @apply text-white; background: var(--warn); border-color: var(--warn); }
   .sr-note { @apply m-4 rounded-lg; }
