@@ -158,6 +158,27 @@ describe("mod search", () => {
     assert.equal(plain.items[0][7], null, "no weight recorded");
     const [m] = await (await api(null, "GET", `/api/catalog/mods?ids=${eco.modId}`)).json();
     assert.deepEqual(m.features, ["atm"], "known by its mod id");
+    assert.deepEqual(m.modIds, ["ServerEconomy"], "the editor matches ATM variants on these");
+  });
+
+  test("ATM values that depend on the setup's other mods (Guns of Marz), and firearms that pay less when worn", async () => {
+    const eco = await addMod("3728629828", "Server Economy", []);
+    const extra = { condition: ["Base.Pistol"],
+      variants: [{ requires: ["SWMG", "GunsOfMarz"], atm: { "Base.GoldBar": 325, "MarzGuns.DEAGLE": 1100 }, condition: ["MarzGuns.DEAGLE"] }] };
+    await pool.query("UPDATE mod_versions SET atm = $2, atm_extra = $3 WHERE id = $1",
+      [eco.versionId, { "Base.GoldBar": 325, "Base.Pistol": 300 }, extra]);
+    const v = await (await api(null, "GET", `/api/catalog/versions/${eco.versionId}`)).json();
+    assert.deepEqual(v.atmExtra, extra, "the editor picks the table");
+    const fts = ["Base.GoldBar", "Base.Pistol", "MarzGuns.DEAGLE"];
+    const plain = await (await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts })).json();
+    assert.deepEqual([plain.atm, plain.atmCondition], [{ "Base.GoldBar": 325, "Base.Pistol": 300 }, ["Base.Pistol"]]);
+    const partial = await (await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: ["gunsofmarz"] })).json();
+    assert.deepEqual(partial.atm, plain.atm, "both mods are needed");
+    const gom = await (await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: ["SWMG", "gunsofmarz"] })).json();
+    assert.deepEqual([gom.atm, gom.atmCondition], [{ "Base.GoldBar": 325, "MarzGuns.DEAGLE": 1100 }, ["MarzGuns.DEAGLE"]],
+      "the Guns of Marz table replaces the plain one (case doesn't matter)");
+    assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: "SWMG" })).status, 400);
+    assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: [3] })).status, 400);
   });
 
   test("lookup by ids", async () => {

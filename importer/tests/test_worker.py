@@ -99,6 +99,9 @@ class WorkerTests(unittest.TestCase):
         write(os.path.join(se, "media", "lua", "shared", "HZEconomySellables.lua"),
               'local Sellables = {\n    ["Base.GoldBar"] = { baseValue = 325, restockCategory = "special_rewards" },\n'
               '    ["Guns.Pistol"] = { baseValue = 40, restockCategory = "x" },\n}\nreturn Sellables\n')
+        write(os.path.join(se, "media", "lua", "shared", "HZEconomyProducts.lua"),
+              'local Products = {\n    weapons_firearms = {\n'
+              '    { id = "weapons_firearms_rifle", itemType = "Base.HuntingRifle", basePrice = 5000 },\n    },\n}\n')
         # A mod that ships Stockroom (the editor's Stockroom tool is offered only with it).
         sr = os.path.join(cls.downloads, "3100000001", "mods", "Stockroom", "42", "media")
         write(os.path.join(sr, "lua", "client", "Stockroom", "Storage.lua"), "-- codec\n")
@@ -190,15 +193,19 @@ class WorkerTests(unittest.TestCase):
 
     def test_weights_atm_values_and_the_data_format_are_recorded(self):
         import worker
-        from pzcatalog import FORMAT
+        from pzcatalog import ATM_FORMAT, FORMAT
         self.queue("2200148440")
         self.queue("3728629828")
         self.assertEqual(worker.cmd_run(), 2)
         self.assertEqual(self.one("SELECT weight FROM catalog_items WHERE full_type = 'Guns.Pistol'")[0], 1.5)
-        fmt, atm, features = self.one("""SELECT v.format, v.atm, v.features FROM mod_versions v JOIN mods m ON m.id = v.mod_id
-                                           WHERE m.workshop_id = '3728629828'""")
-        self.assertEqual((fmt, atm, features), (FORMAT, {"Base.GoldBar": 325, "Guns.Pistol": 40}, ["atm"]))
-        self.assertIsNone(self.one("SELECT v.atm FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE m.workshop_id = '2200148440'")[0])
+        fmt, atm, extra, features = self.one("""SELECT v.format, v.atm, v.atm_extra, v.features FROM mod_versions v
+                                                  JOIN mods m ON m.id = v.mod_id WHERE m.workshop_id = '3728629828'""")
+        self.assertEqual((fmt, atm, features),
+                         (ATM_FORMAT, {"Base.GoldBar": 325, "Guns.Pistol": 40, "Base.HuntingRifle": 500}, ["atm"]),
+                         "the gun shop's rifle is bought back at 10%")
+        self.assertEqual(extra, {"condition": ["Base.HuntingRifle"]})
+        self.assertEqual(self.one("SELECT v.format, v.atm FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE m.workshop_id = '2200148440'"),
+                         (FORMAT, None))
 
     def test_an_economy_mod_update_replaces_its_atm_values_entirely(self):
         import worker
@@ -215,7 +222,8 @@ class WorkerTests(unittest.TestCase):
             worker.cmd_run()
             newest = self.one("""SELECT v.atm FROM mod_versions v JOIN mods m ON m.id = v.mod_id
                                   WHERE m.workshop_id = '3728629828' ORDER BY v.created_at DESC LIMIT 1""")[0]
-            self.assertEqual(newest, {"Base.GoldBar": 400, "Base.Diamond": 25}, "exactly the mod's current table")
+            self.assertEqual(newest, {"Base.GoldBar": 400, "Base.Diamond": 25, "Base.HuntingRifle": 500},
+                             "exactly the mod's current table")
         finally:
             write(sellables, original)
             STEAM["3728629828"]["time_updated"] = 1790000000
@@ -232,6 +240,20 @@ class WorkerTests(unittest.TestCase):
         rows = self.one_all("""SELECT v.format, (SELECT weight FROM catalog_items c WHERE c.version_id = v.id AND full_type = 'Guns.Pistol')
                                  FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE m.workshop_id = '2200148440' ORDER BY v.format""")
         self.assertEqual(rows, [(1, None), (2, 1.5)], "a new version; the old one is left as it was")
+        self.assertEqual(worker.cmd_check_updates(), 0, "not again")
+
+    def test_atm_mods_from_before_gun_buybacks_are_imported_again_once(self):
+        import worker
+        self.queue("3728629828")
+        self.queue("2200148440")
+        worker.cmd_run()
+        with psycopg.connect(DB) as c:   # pretend both were imported in format 2
+            c.execute("UPDATE mod_versions SET format = 2, atm_extra = NULL WHERE mod_id IN "
+                      "(SELECT id FROM mods WHERE workshop_id IN ('3728629828', '2200148440'))")
+        self.assertEqual(worker.cmd_check_updates(), 1, "only the mod with an ATM")
+        worker.cmd_run()
+        self.assertEqual(self.one_all("""SELECT v.format FROM mod_versions v JOIN mods m ON m.id = v.mod_id
+                                         WHERE m.workshop_id = '3728629828' ORDER BY v.format"""), [(2,), (3,)])
         self.assertEqual(worker.cmd_check_updates(), 0, "not again")
 
     def test_the_same_update_twice_writes_one_version(self):

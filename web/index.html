@@ -440,8 +440,11 @@ function priceCells(ft) {
     '<div class="cell col-price col-lh" title="Highest of ' + n + '">' + money(p[2]) + '</div>' + now;
 }
 // Weight (always) and Server Economy's ATM sell price (when a mod in the setup has an ATM).
-// ATM: full type -> baseValue from the mod's HZEconomySellables.lua; the ATM pays baseValue × ATM sell % / 100.
-let ATM = new Map();
+// ATM: full type -> value from the mod's files (see importer/pzcatalog/economy.py); the ATM pays value × ATM sell % / 100.
+// ATM_COND: firearms, which the ATM pays less for when worn (down to 25% of this at no condition).
+let ATM = new Map(), ATM_COND = new Set();
+// The mod.info ids in this setup, for the Stockroom page's ATM values (some depend on other mods).
+const SETUP_MODIDS_KEY = "bcedit.modids.v1";
 const ATM_KEY = "bcedit.atmpct.v1";
 let atmPct = 25;
 try { const v = Number(localStorage.getItem(ATM_KEY)); if (localStorage.getItem(ATM_KEY) !== null && v >= 0 && v <= 1000) atmPct = v; } catch (e) { /* storage unavailable */ }
@@ -450,7 +453,8 @@ const fmtWeight = w => w.toLocaleString(undefined, { maximumFractionDigits: 3 })
 function atmCell(ft) {
   const p = atmPrice(ft);
   return p == null ? '<div class="cell col-atm num muted">–</div>'
-    : '<div class="cell col-atm num" title="Value ' + money(ATM.get(ft)) + ' × ' + atmPct + '%">' + money(p) + '</div>';
+    : '<div class="cell col-atm num" title="Value ' + money(ATM.get(ft)) + ' × ' + atmPct + '%'
+      + (ATM_COND.has(ft) ? ' at full condition; a worn one pays less (down to 25%)' : '') + '">' + money(p) + '</div>';
 }
 function sortValue(key) {
   if (key === "weight") return it => it.weight;
@@ -1128,7 +1132,9 @@ async function buildCatalog() {
 
   MODS = layers.map(l => l.kind === "base" ? ["Project Zomboid", "vanilla base game", "", true] : [l.name, l.workshopId || "", l.workshopId || "", true]);
   ICONSETS = layers.map((l, i) => ({ vid: l.versionId, cols: datas[i].icons.cols, perSheet: datas[i].icons.perSheet }));
-  CATNAMES = {}; ATM = new Map();
+  CATNAMES = {}; ATM = new Map(); ATM_COND = new Set();
+  const modIds = new Set(layers.flatMap(l => (l.modIds || []).map(x => x.toLowerCase())));
+  try { localStorage.setItem(SETUP_MODIDS_KEY, JSON.stringify([...modIds])); } catch (e) { /* storage unavailable */ }
   const byFt = new Map(), iconByName = new Map();
   datas.forEach((d, li) => {
     for (const r of d.items) if (r[5] >= 0 && r[6]) iconByName.set(r[6].toLowerCase(), li * 1e6 + r[5]);
@@ -1142,7 +1148,15 @@ async function buildCatalog() {
       }
     }
     Object.assign(CATNAMES, d.catNames);
-    if (d.atm) for (const [ft, v] of Object.entries(d.atm)) ATM.set(ft, v);
+    if (d.atm) {
+      // A table for this setup's other mods replaces the mod's own (Server Economy with Guns of Marz).
+      const v = (d.atmExtra?.variants || []).find(x => x.requires.every(id => modIds.has(id.toLowerCase())));
+      const cond = new Set((v || d.atmExtra || {}).condition || []);
+      for (const [ft, val] of Object.entries(v ? v.atm : d.atm)) {
+        ATM.set(ft, val);
+        if (cond.has(ft)) ATM_COND.add(ft); else ATM_COND.delete(ft);
+      }
+    }
   });
   ITEMS = [...byFt.values()].map(it => ({ ...it, key: makeKey(it.name, it.ft) }));
   BYFT = new Map(ITEMS.map(it => [it.ft, it]));
