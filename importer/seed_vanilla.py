@@ -12,7 +12,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pzcatalog import COLS, GAME_VERSION, PER_SHEET, TILE  # noqa: E402
+from pzcatalog import COLS, FORMAT, GAME_VERSION, PER_SHEET, TILE  # noqa: E402
 from pzcatalog.build import build_layer  # noqa: E402
 from pzcatalog.rules import bc_lua_root  # noqa: E402
 
@@ -36,6 +36,7 @@ def main(items_root, icons_root, out):
         json.dump({
             "game": game,
             "label": f"Build {game}",
+            "format": FORMAT,
             "icons": {"tile": TILE, "cols": COLS, "perSheet": PER_SHEET, "sheets": len(layer["sheets"])},
             "items": layer["items"],
             "catNames": layer["catNames"],

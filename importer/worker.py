@@ -28,7 +28,8 @@ import urllib.request
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pzcatalog import COLS, GAME_VERSION, PER_SHEET, TILE  # noqa: E402
+from pzcatalog import COLS, FORMAT, GAME_VERSION, PER_SHEET, TILE  # noqa: E402
+from pzcatalog.economy import atm_values  # noqa: E402
 from pzcatalog.build import build_layer  # noqa: E402
 from pzcatalog.features import detect_features  # noqa: E402
 from pzcatalog.rules import bc_lua_root  # noqa: E402
@@ -190,27 +191,30 @@ def base_props(conn):
     return row[0]
 
 
-def write_version(conn, job, title, mod_ids, updated, layer, features=()):
-    """One transaction: the mod (created on first import, crediting who asked), the version, items, names, icons."""
+def write_version(conn, job, title, mod_ids, updated, layer, features=(), atm=None):
+    """One transaction: the mod (created on first import, crediting who asked), the version, items, names, icons.
+
+    The same update in an older data format (e.g. without weights) doesn't count: a new version is written."""
     label = updated.strftime("%Y-%m-%d %H:%M UTC") if updated else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     with conn.cursor() as cur:
         cur.execute("""INSERT INTO mods (kind, workshop_id, name, created_by) VALUES ('workshop', %s, %s, %s)
                        ON CONFLICT (workshop_id) DO UPDATE SET name = EXCLUDED.name RETURNING id""",
                     (job["workshop_id"], title, job["requested_by"]))
         mod_id = cur.fetchone()[0]
-        cur.execute("SELECT id FROM mod_versions WHERE mod_id = %s AND label = %s", (mod_id, label))
+        cur.execute("SELECT id FROM mod_versions WHERE mod_id = %s AND label = %s AND format >= %s", (mod_id, label, FORMAT))
         existing = cur.fetchone()
         if existing:   # this exact update is already in the catalog (e.g. two jobs raced): nothing to write
             return mod_id, existing[0]
         icons = {"tile": TILE, "cols": COLS, "perSheet": PER_SHEET, "sheets": len(layer["sheets"])}
         cur.execute("""INSERT INTO mod_versions (mod_id, label, source_updated_at, game_version, mod_ids, icons,
-                                                 item_count, requested_by, source_title, features)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                                                 item_count, requested_by, source_title, features, format, atm)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                     (mod_id, label, updated, ".".join(map(str, GAME_VERSION)), mod_ids, Jsonb(icons),
-                     len(layer["items"]), job["requested_by"], title, list(features)))
+                     len(layer["items"]), job["requested_by"], title, list(features), FORMAT,
+                     Jsonb(atm) if atm else None))
         version_id = cur.fetchone()[0]
         with cur.copy("COPY catalog_items (version_id, full_type, name, display_category, default_category, "
-                      "item_type, icon_tile, icon_name) FROM STDIN") as cp:
+                      "item_type, icon_tile, icon_name, weight) FROM STDIN") as cp:
             for r in layer["items"]:
                 cp.write_row((version_id, *r))
         for k, v in layer["catNames"].items():
@@ -275,12 +279,14 @@ def process(conn, job, rules, props, work_dir):
         layer = build_layer(media, rules.get(), base_props=props,
                             mod_ids=[m["id"] for m in mods], workshop_ids=[ws])
         features = detect_features(media, [m["id"] for m in mods])
+        atm = atm_values(media)
         title = info.get("title") or job["title"] or mods[0]["name"]
         mod_id, version_id = write_version(conn, job, title, [m["id"] for m in mods], info.get("updated"), layer,
-                                           features)
+                                           features, atm)
         conn.commit()
         log(f"Imported {ws} '{title}': {len(layer['items'])} items, {len(layer['sheets'])} icon sheet(s)"
-            + (f", features: {', '.join(features)}" if features else ""))
+            + (f", features: {', '.join(features)}" if features else "")
+            + (f", ATM values for {len(atm)} items" if atm else ""))
         finish(conn, job["id"], "done", mod_id, version_id)
         return True
     except Exception as err:  # noqa: BLE001 - every failure is recorded on the job, never lost
@@ -338,10 +344,13 @@ def cmd_check_updates():
 
 def _check_updates(conn, run_id):
     with conn.cursor() as cur:
-        cur.execute("""SELECT m.workshop_id, max(v.source_updated_at) FROM mods m
+        cur.execute("""SELECT m.workshop_id, max(v.source_updated_at), max(v.format) FROM mods m
                          JOIN mod_versions v ON v.mod_id = m.id
                         WHERE m.kind = 'workshop' GROUP BY m.workshop_id""")
-        have = dict(cur.fetchall())
+        rows = cur.fetchall()
+        have = {ws: latest for ws, latest, _ in rows}
+        # Mods whose newest data is in an older format (e.g. no weights) are imported again, once.
+        stale = {ws for ws, _, fmt in rows if (fmt or 1) < FORMAT}
     if not have:
         log("No Workshop mods in the catalog yet")
         end_run(conn, run_id, 0, 0, 0)
@@ -351,7 +360,7 @@ def _check_updates(conn, run_id):
     with conn.cursor() as cur:
         for ws, latest in have.items():
             d = info.get(ws)
-            if d and d["ok"] and d["updated"] and (latest is None or d["updated"] > latest):
+            if d and d["ok"] and d["updated"] and (latest is None or d["updated"] > latest or ws in stale):
                 cur.execute("""INSERT INTO import_jobs (workshop_id, reason, source_updated_at, title)
                                VALUES (%s, 'update', %s, %s)
                                ON CONFLICT (workshop_id) WHERE status IN ('queued', 'running') DO NOTHING""",
@@ -359,7 +368,8 @@ def _check_updates(conn, run_id):
                 queued += cur.rowcount
     conn.commit()
     end_run(conn, run_id, len(have), queued, 0)
-    log(f"Checked {len(have)} mod(s); queued {queued} update(s)")
+    log(f"Checked {len(have)} mod(s); queued {queued} update(s)"
+        + (f" ({len(stale)} in an older data format)" if stale else ""))
     return queued
 
 

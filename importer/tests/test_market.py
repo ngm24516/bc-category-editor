@@ -42,7 +42,8 @@ class FakeMarket(BaseHTTPRequestHandler):
 
 
 def listing(i, ft, price, qty=1):
-    return {"listing_id": f"listing_{i}", "full_type": ft, "price": price, "quantity": qty, "shop_name": "Shop"}
+    return {"listing_id": f"listing_{i}", "full_type": ft, "price": price, "quantity": qty, "shop_name": "Shop",
+            "owner_display_name": f"Owner{i % 3}"}
 
 
 class ParsingTests(unittest.TestCase):
@@ -54,7 +55,7 @@ class ParsingTests(unittest.TestCase):
 
     def test_malformed_listings_are_dropped(self):
         import market
-        self.assertEqual(market.clean_listing(listing(1, "Base.Axe", 12.5, 3)), ("listing_1", 12.5, "Base.Axe", 3, "Shop"))
+        self.assertEqual(market.clean_listing(listing(1, "Base.Axe", 12.5, 3)), ("listing_1", 12.5, "Base.Axe", 3, "Shop", "Owner1"))
         for bad in [listing(1, "Axe", 1), listing(1, "Base.Axe", -1), listing(1, "Base.Axe", "12"),
                     listing(1, "Base.Axe", float("inf")), listing(1, "Base.Axe; DROP", 1), {"price": 1}, "x"]:
             self.assertIsNone(market.clean_listing(bad), bad)
@@ -122,6 +123,18 @@ class MarketJobTests(unittest.TestCase):
         self.assertEqual(self.one("SELECT count(*) FROM market_listings")[0], 252)
         self.assertEqual(self.one("SELECT array_agg(price ORDER BY price) FROM market_listings WHERE listing_id = 'listing_0'")[0],
                          [10, 99])
+
+    def test_current_listings_are_those_of_the_last_full_read(self):
+        import market
+        market.cmd_market()
+        MARKET["snapshot"] += 3600
+        sold = MARKET["listings"].pop(0)          # sold since: no longer current, still in the history
+        market.cmd_market()
+        crawl = self.one("SELECT last_crawl_at FROM marketplaces WHERE name = 'OneLife'")[0]
+        current = self.one("SELECT count(*) FROM market_listings WHERE last_seen = %s", crawl)[0]
+        self.assertEqual(current, 249)
+        self.assertEqual(self.one("SELECT last_seen < %s, owner_name FROM market_listings WHERE listing_id = %s",
+                                  crawl, sold["listing_id"]), (True, "Owner0"))
 
     def test_a_failing_marketplace_is_recorded_not_fatal(self):
         import market

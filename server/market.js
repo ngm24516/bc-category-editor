@@ -3,7 +3,7 @@
 //
 //   GET    /api/markets                   enabled marketplaces, and the signed-in user's choice
 //   PUT    /api/markets/choice            { marketplaceId | null }   (signed in; user data, RLS)
-//   GET    /api/markets/:id/prices        { items: { fullType: [avg, low, high, listings] } } for library items
+//   GET    /api/markets/:id/prices        { items: { fullType: [avg, low, high, listings, nowLow, owner, shop] } }
 //   GET    /api/admin/markets             every marketplace with its address, status and counts (admins)
 //   POST   /api/admin/markets             { name, url } checks the address answers like a marketplace, then adds it
 //   PATCH  /api/admin/markets/:id         { enabled }
@@ -97,15 +97,28 @@ export function createMarketRouter({ pool, requireUser, config }) {
     const m = (await pool.query("SELECT id, last_snapshot_at FROM marketplaces WHERE id = $1 AND enabled", [req.params.id])).rows[0];
     if (!m) return bad(res, 404, "not_found", "No such marketplace");
     // Only items in the library: a listing counts when its full_type is exactly a catalog item's.
+    // History: every listing price recorded. Current: the cheapest listing in the last full read (last_seen equals
+    // last_crawl_at), with who sells it.
     const { rows } = await pool.query(
-      `SELECT l.full_type, round(avg(l.price), 2) AS avg, min(l.price) AS low, max(l.price) AS high, count(*) AS n
-         FROM market_listings l
-        WHERE l.marketplace_id = $1 AND EXISTS (SELECT 1 FROM catalog_items c WHERE c.full_type = l.full_type)
-        GROUP BY l.full_type`, [m.id]);
+      `WITH hist AS (
+         SELECT l.full_type, round(avg(l.price), 2) AS avg, min(l.price) AS low, max(l.price) AS high, count(*) AS n
+           FROM market_listings l
+          WHERE l.marketplace_id = $1 AND EXISTS (SELECT 1 FROM catalog_items c WHERE c.full_type = l.full_type)
+          GROUP BY l.full_type),
+       cur AS (
+         SELECT DISTINCT ON (full_type) full_type, price, owner_name, shop_name
+           FROM market_listings
+          -- compared in SQL: the timestamps have microseconds, which a JavaScript Date would round away
+          WHERE marketplace_id = $1 AND last_seen = (SELECT last_crawl_at FROM marketplaces WHERE id = $1)
+          ORDER BY full_type, price, owner_name NULLS LAST)
+       SELECT h.*, c.price AS cur_price, c.owner_name, c.shop_name FROM hist h LEFT JOIN cur c USING (full_type)`,
+      [m.id]);
     res.set("Cache-Control", "public, max-age=300");
     res.json({
       marketplaceId: m.id, snapshotAt: m.last_snapshot_at,
-      items: Object.fromEntries(rows.map(r => [r.full_type, [Number(r.avg), Number(r.low), Number(r.high), Number(r.n)]])),
+      // [average, low, high, listings seen, current lowest (null if none now), its owner, its shop]
+      items: Object.fromEntries(rows.map(r => [r.full_type, [Number(r.avg), Number(r.low), Number(r.high), Number(r.n),
+        r.cur_price == null ? null : Number(r.cur_price), r.owner_name ?? null, r.shop_name ?? null]])),
     });
   });
 

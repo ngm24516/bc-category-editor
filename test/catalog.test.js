@@ -27,6 +27,20 @@ async function addMod(workshopId, name, items) {
 describe("base game seed", () => {
   beforeEach(fresh);
 
+  test("has weights, and a newer data format of the same build is loaded as a new version", async () => {
+    const base = await (await api(null, "GET", "/api/catalog/base")).json();
+    const v = await (await api(null, "GET", `/api/catalog/versions/${base.versionId}`)).json();
+    const axe = v.items.find(r => r[0] === "Base.Axe");
+    assert.equal(axe[7], 3, "Firefighter Axe weighs 3");
+    assert.ok(v.items.every(r => typeof r[7] === "number"), "every base item has a weight");
+    // A database that still has the old (format 1) seed gets the new one on the next start.
+    await pool.query("UPDATE mod_versions SET format = 1");
+    assert.equal(await seedBaseGame(pool, () => {}), true);
+    const { rows } = await pool.query("SELECT format FROM mod_versions ORDER BY created_at");
+    assert.deepEqual(rows.map(r => r.format), [1, 2]);
+    assert.notEqual((await (await api(null, "GET", "/api/catalog/base")).json()).versionId, base.versionId, "the newest is served");
+  });
+
   test("is loaded once, and loading again is a no-op", async () => {
     assert.equal(await seedBaseGame(pool, () => {}), false);
     const { rows } = await pool.query("SELECT count(*)::int AS n FROM mod_versions");
@@ -48,7 +62,7 @@ describe("base game seed", () => {
     const v = await r.json();
     const axe = v.items.find(i => i[0] === "Base.Axe");
     assert.ok(axe, "Base.Axe is in the base game");
-    assert.equal(axe.length, 7);
+    assert.equal(axe.length, 8, "fullType, name, displayCategory, defaultCategory, type, iconTile, iconName, weight");
     assert.ok(axe[5] >= 0, "Base.Axe has an icon tile");
     assert.ok(Object.keys(v.catNames).length > 50);
     assert.equal(v.icons.tile, 32);
@@ -126,6 +140,19 @@ describe("mod search", () => {
     for (const icon of Object.values(r.items).map(x => x.icon).filter(Boolean)) assert.ok(r.iconSets[icon[0]].cols > 0);
     assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: ["not an item"] })).status, 400);
     assert.equal((await api(null, "POST", "/api/catalog/lookup", {})).status, 400);
+  });
+
+  test("a version serves its items' weights and, for an economy mod, its ATM values", async () => {
+    const eco = await addMod("3728629828", "Server Economy", [["Base.GoldBar", "Gold Bar", "Material", "Material", "normal", -1, "GoldBar", 16]]);
+    await pool.query(`UPDATE mod_versions SET atm = '{"Base.GoldBar": 325}', mod_ids = '{ServerEconomy}' WHERE id = $1`, [eco.versionId]);
+    const v = await (await api(null, "GET", `/api/catalog/versions/${eco.versionId}`)).json();
+    assert.deepEqual(v.items[0].slice(7), [16]);
+    assert.deepEqual(v.atm, { "Base.GoldBar": 325 });
+    const plain = await (await api(null, "GET", `/api/catalog/versions/${brita.versionId}`)).json();
+    assert.equal(plain.atm, undefined);
+    assert.equal(plain.items[0][7], null, "no weight recorded");
+    const [m] = await (await api(null, "GET", `/api/catalog/mods?ids=${eco.modId}`)).json();
+    assert.deepEqual(m.features, ["atm"], "known by its mod id");
   });
 
   test("lookup by ids", async () => {
