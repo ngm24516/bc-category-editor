@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="app.css">
 <script src="account-menu.js"></script>
 <script src="stockroom-codec.js"></script>
+<script src="atm.js"></script>
 </head>
 <body>
 <header>
@@ -75,8 +76,9 @@
     </div>
     <div id="atmBox" hidden>
       <label for="atmPct">ATM sell %</label>
-      <input type="number" id="atmPct" min="0" max="1000" step="1" value="25">
-      <div class="help" style="margin-top:4px">Server Economy's ATM pays each item's value × this percent. Use your server's <b>SellValuePercent</b> sandbox setting (the mod's default is 25).</div>
+      <input type="number" id="atmPct" min="0" max="10000" step="1" value="25">
+      <div class="help" style="margin-top:4px">Server Economy's ATM pays each item's value × this percent (your server's <b>SellValuePercent</b>) × the item's category percents. <span id="atmSrc"></span></div>
+      <button id="atmServerBtn" style="margin-top:6px">Server settings…</button>
     </div>
     <div>
       <label for="blk">Category blacklist (Mod Options)</label>
@@ -156,6 +158,16 @@
     <div id="stockPick2"></div>
     <div id="stockOut"></div>
     <div class="acts"><button id="stockClose">Close</button><button id="stockApply" class="primary" disabled>Reset to default</button></div>
+  </div>
+</div>
+
+<div class="modal" id="atmModal">
+  <div class="box">
+    <h2>Your server's ATM settings</h2>
+    <p>The ATM's prices depend on your server's Server Economy sandbox settings (sell %, category percents, gun buyback percents). Paste them here: the server console's sandbox list, <span class="mono">SandboxVars.lua</span> or <span class="mono">servertest_SandboxVars.lua</span> all work. Only the ATM settings are kept, in this browser.</p>
+    <textarea id="atmText" class="mono" rows="10" spellcheck="false" placeholder="SellValuePercent 200&#10;PreciousMetalsSellValuePercent 35&#10;FirearmsSellbackPercent 2&#10;…"></textarea>
+    <div class="muted" id="atmFound"></div>
+    <div class="acts"><button id="atmReset">Use the mod's defaults</button><button id="atmCancel">Cancel</button><button id="atmApply" class="primary">Use these</button></div>
   </div>
 </div>
 
@@ -440,21 +452,20 @@ function priceCells(ft) {
     '<div class="cell col-price col-lh" title="Highest of ' + n + '">' + money(p[2]) + '</div>' + now;
 }
 // Weight (always) and Server Economy's ATM sell price (when a mod in the setup has an ATM).
-// ATM: full type -> value from the mod's files (see importer/pzcatalog/economy.py); the ATM pays value × ATM sell % / 100.
+// ATM: full type -> the numbers behind its ATM value (see importer/pzcatalog/economy.py); atm.js works out the
+// payout with the server's settings (ATM_SET, pasted by the user) or the mod's defaults (ATM_DEF, from the version).
 // ATM_COND: firearms, which the ATM pays less for when worn (down to 25% of this at no condition).
-let ATM = new Map(), ATM_COND = new Set();
+let ATM = new Map(), ATM_COND = new Set(), ATM_DEF = {}, ATM_SET = ATMCalc.load();
 // The mod.info ids in this setup, for the Stockroom page's ATM values (some depend on other mods).
 const SETUP_MODIDS_KEY = "bcedit.modids.v1";
-const ATM_KEY = "bcedit.atmpct.v1";
-let atmPct = 25;
-try { const v = Number(localStorage.getItem(ATM_KEY)); if (localStorage.getItem(ATM_KEY) !== null && v >= 0 && v <= 1000) atmPct = v; } catch (e) { /* storage unavailable */ }
-const atmPrice = ft => ATM.has(ft) ? ATM.get(ft) * atmPct / 100 : null;
+const atmPrice = ft => ATM.has(ft) ? ATMCalc.payout(ATM.get(ft), ATM_SET, ATM_DEF) : null;
 const fmtWeight = w => w.toLocaleString(undefined, { maximumFractionDigits: 3 });
 function atmCell(ft) {
   const p = atmPrice(ft);
   return p == null ? '<div class="cell col-atm num muted">–</div>'
-    : '<div class="cell col-atm num" title="Value ' + money(ATM.get(ft)) + ' × ' + atmPct + '%'
-      + (ATM_COND.has(ft) ? ' at full condition; a worn one pays less (down to 25%)' : '') + '">' + money(p) + '</div>';
+    : '<div class="cell col-atm num" title="Value ' + money(ATMCalc.value(ATM.get(ft), ATM_SET, ATM_DEF)) + ' × '
+      + ATMCalc.sellPercent(ATM_SET, ATM_DEF) + '%' + (ATM_COND.has(ft) ? ' at full condition; a worn one pays less (down to 25%)' : '')
+      + '">' + money(p) + '</div>';
 }
 function sortValue(key) {
   if (key === "weight") return it => it.weight;
@@ -474,14 +485,35 @@ function layoutCols() {
   cols.push(w("mod"), w("def"), "minmax(150px, 1.4fr)", "64px");
   document.documentElement.style.setProperty("--cols", cols.join(" "));
 }
-$("atmPct").value = atmPct;
+function showAtmSettings() {
+  $("atmPct").value = ATMCalc.sellPercent(ATM_SET, ATM_DEF);
+  const n = Object.keys(ATM_SET).length;
+  $("atmSrc").textContent = n > 1 ? "Using your server's settings (" + n + ")." : "Other percents: the mod's defaults; set yours with Server settings.";
+}
 $("atmPct").addEventListener("input", () => {
   const v = Number($("atmPct").value);
-  if (!(v >= 0 && v <= 1000)) return;
-  atmPct = v;
-  try { localStorage.setItem(ATM_KEY, String(v)); } catch (e) { /* storage unavailable */ }
-  applyFilters();
+  if (!($("atmPct").value !== "" && v >= 0 && v <= 10000)) return;
+  ATM_SET = { ...ATM_SET, SellValuePercent: v };
+  ATMCalc.save(ATM_SET); showAtmSettings(); applyFilters();
 });
+function atmFoundText() {
+  const found = ATMCalc.parse($("atmText").value), n = Object.keys(found).length;
+  $("atmFound").textContent = n ? "Found " + n + " ATM settings: " + Object.entries(found).map(([k, v]) => k + " " + v).join(", ")
+    : "No ATM settings found yet.";
+  $("atmApply").disabled = !n;
+  return found;
+}
+$("atmServerBtn").onclick = () => {
+  $("atmText").value = Object.entries(ATM_SET).map(([k, v]) => k + " " + v).join("\n");
+  atmFoundText(); $("atmModal").classList.add("on"); $("atmText").focus();
+};
+$("atmText").addEventListener("input", atmFoundText);
+$("atmCancel").onclick = () => $("atmModal").classList.remove("on");
+$("atmReset").onclick = () => { ATM_SET = {}; ATMCalc.save(ATM_SET); $("atmModal").classList.remove("on"); showAtmSettings(); applyFilters(); };
+$("atmApply").onclick = () => {
+  ATM_SET = atmFoundText(); ATMCalc.save(ATM_SET); $("atmModal").classList.remove("on"); showAtmSettings(); applyFilters();
+  toast("Using your server's ATM settings.");
+};
 
 function renderSorters() {
   document.querySelectorAll(".sorter").forEach(b => {
@@ -1132,7 +1164,7 @@ async function buildCatalog() {
 
   MODS = layers.map(l => l.kind === "base" ? ["Project Zomboid", "vanilla base game", "", true] : [l.name, l.workshopId || "", l.workshopId || "", true]);
   ICONSETS = layers.map((l, i) => ({ vid: l.versionId, cols: datas[i].icons.cols, perSheet: datas[i].icons.perSheet }));
-  CATNAMES = {}; ATM = new Map(); ATM_COND = new Set();
+  CATNAMES = {}; ATM = new Map(); ATM_COND = new Set(); ATM_DEF = {};
   const modIds = new Set(layers.flatMap(l => (l.modIds || []).map(x => x.toLowerCase())));
   try { localStorage.setItem(SETUP_MODIDS_KEY, JSON.stringify([...modIds])); } catch (e) { /* storage unavailable */ }
   const byFt = new Map(), iconByName = new Map();
@@ -1152,8 +1184,11 @@ async function buildCatalog() {
       // A table for this setup's other mods replaces the mod's own (Server Economy with Guns of Marz).
       const v = (d.atmExtra?.variants || []).find(x => x.requires.every(id => modIds.has(id.toLowerCase())));
       const cond = new Set((v || d.atmExtra || {}).condition || []);
+      // Versions imported before format 4 have only the value at the mod's defaults: no categories to apply.
+      const raw = (v || d.atmExtra || {}).raw;
+      Object.assign(ATM_DEF, d.atmExtra?.defaults || {});
       for (const [ft, val] of Object.entries(v ? v.atm : d.atm)) {
-        ATM.set(ft, val);
+        ATM.set(ft, raw?.[ft] || [val, ""]);
         if (cond.has(ft)) ATM_COND.add(ft); else ATM_COND.delete(ft);
       }
     }
@@ -1163,6 +1198,7 @@ async function buildCatalog() {
   ensureUnknownItems();
   updateFeatureButtons();
   $("atmBox").hidden = !ATM.size;
+  showAtmSettings();
   document.body.classList.toggle("atm-on", ATM.size > 0);
   if (!ATM.size && F.sort && F.sort.key === "atm") F.sort = null;
   layoutCols();

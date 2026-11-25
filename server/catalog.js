@@ -48,7 +48,8 @@ export const modJson = r => ({
 export function atmFor(atm, extra, modIds) {
   const have = new Set([...modIds].map(x => String(x).toLowerCase()));
   const v = (extra?.variants || []).find(x => x.requires.every(id => have.has(id.toLowerCase())));
-  return v ? { atm: v.atm, condition: v.condition || [] } : { atm: atm || {}, condition: extra?.condition || [] };
+  const t = v || extra || {};
+  return { atm: v ? v.atm : atm || {}, raw: t.raw || {}, condition: t.condition || [] };
 }
 
 export function createCatalogRouter({ pool }) {
@@ -142,10 +143,15 @@ export function createCatalogRouter({ pool }) {
       `SELECT atm, atm_extra FROM (SELECT DISTINCT ON (mod_id) atm, atm_extra, created_at FROM mod_versions
                                     ORDER BY mod_id, created_at DESC) v
         WHERE atm IS NOT NULL ORDER BY created_at`)).rows;
-    const want = new Set(list), atm = {}, condition = new Set();
+    const want = new Set(list), atm = {}, atmRaw = {}, atmDefaults = {}, condition = new Set();
     for (const e of economies) {
       const t = atmFor(e.atm, e.atm_extra, modIds);
-      for (const [ft, v] of Object.entries(t.atm)) if (want.has(ft)) { atm[ft] = Number(v); condition.delete(ft); }
+      Object.assign(atmDefaults, e.atm_extra?.defaults || {});
+      for (const [ft, v] of Object.entries(t.atm)) {
+        if (!want.has(ft)) continue;
+        atm[ft] = Number(v); condition.delete(ft);
+        if (t.raw[ft]) atmRaw[ft] = t.raw[ft]; else delete atmRaw[ft];
+      }
       for (const ft of t.condition) if (want.has(ft) && ft in t.atm) condition.add(ft);
     }
     const versions = [...new Set(rows.map(r => r.icon_version).filter(Boolean))];
@@ -153,7 +159,8 @@ export function createCatalogRouter({ pool }) {
     res.json({
       iconSets: Object.fromEntries(sets.map(v => [v.id, { cols: v.icons.cols, perSheet: v.icons.perSheet }])),
       items: Object.fromEntries(rows.map(r => [r.full_type, { name: r.name, icon: r.icon_version ? [r.icon_version, r.icon_tile] : null }])),
-      atm,
+      atm,                                   // at the mod's default settings, before the sell %
+      atmRaw, atmDefaults,                   // to redo that with the server's settings (web/atm.js)
       atmCondition: [...condition].sort(),   // firearms: the ATM pays this at full condition, less when worn
     });
   }));

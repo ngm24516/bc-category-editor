@@ -203,7 +203,10 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual((fmt, atm, features),
                          (ATM_FORMAT, {"Base.GoldBar": 325, "Guns.Pistol": 40, "Base.HuntingRifle": 500}, ["atm"]),
                          "the gun shop's rifle is bought back at 10%")
-        self.assertEqual(extra, {"condition": ["Base.HuntingRifle"]})
+        self.assertEqual(extra["condition"], ["Base.HuntingRifle"])
+        self.assertEqual(extra["raw"], {"Base.GoldBar": [325, "junk_collectibles"], "Guns.Pistol": [40, "junk_collectibles"],
+                                        "Base.HuntingRifle": [5000, "weapons_firearms", "weapons_firearms", 1]},
+                         "what the editor needs to use the server's own settings")
         self.assertEqual(self.one("SELECT v.format, v.atm FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE m.workshop_id = '2200148440'"),
                          (FORMAT, None))
 
@@ -244,6 +247,7 @@ class WorkerTests(unittest.TestCase):
 
     def test_atm_mods_from_before_gun_buybacks_are_imported_again_once(self):
         import worker
+        from pzcatalog import ATM_FORMAT
         self.queue("3728629828")
         self.queue("2200148440")
         worker.cmd_run()
@@ -253,7 +257,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(worker.cmd_check_updates(), 1, "only the mod with an ATM")
         worker.cmd_run()
         self.assertEqual(self.one_all("""SELECT v.format FROM mod_versions v JOIN mods m ON m.id = v.mod_id
-                                         WHERE m.workshop_id = '3728629828' ORDER BY v.format"""), [(2,), (3,)])
+                                         WHERE m.workshop_id = '3728629828' ORDER BY v.format"""), [(2,), (ATM_FORMAT,)])
         self.assertEqual(worker.cmd_check_updates(), 0, "not again")
 
     def test_the_same_update_twice_writes_one_version(self):

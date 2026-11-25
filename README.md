@@ -63,6 +63,13 @@ Browser ──► Azure Container Apps (one container, one origin)
   are re-imported once). With both `SWMG` and `GunsOfMarz` in the setup, the Guns of Marz table replaces the plain
   one (`mod_versions.atm_extra`, migration 012), in the editor and on the Stockroom page (which gets the setup's
   mod ids from the editor). Firearms pay less when worn (down to 25%); the price shown is at full condition.
+- **Your server's ATM settings:** the ATM's prices depend on the server's sandbox settings (`SellValuePercent`,
+  each sell category's percent, the gun shop's price and sellback percents). **Server settings…** under ATM sell %
+  takes them pasted from the server console's sandbox list or `SandboxVars.lua`, keeps only those options in the
+  browser (`bcedit.atmserver.v1`, shared with the Stockroom page) and works the prices out like the mod
+  (`web/atm.js`, matching `atm_value` in `importer/pzcatalog/economy.py`). For that, versions since format 4 keep
+  the numbers behind each value and the mod's defaults in `atm_extra` (`raw`, `defaults`); prices are rounded down
+  like the ATM shows them.
 - **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
   `ADMIN_DISCORD_IDS`. Shows the queue, when the importer and the hourly update check run next and last, every
   finished import with its worker log, and each importer run (`importer_runs`). Every mod whose latest import
