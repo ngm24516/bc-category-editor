@@ -24,12 +24,12 @@ const FEATURE_MOD_IDS_SQL = Object.entries(FEATURE_MOD_IDS).map(([id, f]) => `('
 
 // Newest version of each mod, with the fields the editor's mod list needs.
 const MOD_LIST_SQL = `
-  SELECT m.id, m.kind, m.workshop_id, m.name, v.id AS version_id, v.label, v.item_count, v.features, v.created_at AS updated_at,
+  SELECT m.id, m.kind, m.workshop_id, m.name, v.id AS version_id, v.label, v.item_count, v.features, v.mod_ids, v.created_at AS updated_at,
          coalesce(u.display_name, u.username) AS added_by
     FROM mods m
     LEFT JOIN users u ON u.id = m.created_by
     LEFT JOIN LATERAL (
-      SELECT id, label, item_count, created_at,
+      SELECT id, label, item_count, created_at, mod_ids,
              -- Features found in the files, plus ones a mod is known by its mod.info id for (see FEATURE_MOD_IDS).
              ARRAY(SELECT DISTINCT f FROM unnest(features || ARRAY(
                SELECT k.feature FROM unnest(mod_ids) AS i(id)
@@ -40,8 +40,16 @@ const MOD_LIST_SQL = `
 export const modJson = r => ({
   id: r.id, kind: r.kind, workshopId: r.workshop_id, name: r.name,
   versionId: r.version_id, label: r.label, itemCount: r.item_count, updatedAt: r.updated_at,
-  features: r.features || [], addedBy: r.added_by || null,
+  features: r.features || [], modIds: r.mod_ids || [], addedBy: r.added_by || null,
 });
+
+// A version's ATM values for a setup whose mods have these mod.info ids: its own table, or a variant's when every
+// mod that variant requires is there (Server Economy with Guns of Marz). See db/migrations/012_atm_extra.sql.
+export function atmFor(atm, extra, modIds) {
+  const have = new Set([...modIds].map(x => String(x).toLowerCase()));
+  const v = (extra?.variants || []).find(x => x.requires.every(id => have.has(id.toLowerCase())));
+  return v ? { atm: v.atm, condition: v.condition || [] } : { atm: atm || {}, condition: extra?.condition || [] };
+}
 
 export function createCatalogRouter({ pool }) {
   const router = express.Router();
@@ -79,7 +87,7 @@ export function createCatalogRouter({ pool }) {
     let body = versionCache.get(id);
     if (!body) {
       const v = await pool.query(
-        "SELECT v.id, v.mod_id, v.label, v.icons, v.atm, m.name FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE v.id = $1", [id]);
+        "SELECT v.id, v.mod_id, v.label, v.icons, v.atm, v.atm_extra, m.name FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE v.id = $1", [id]);
       if (!v.rowCount) return res.status(404).json({ error: "not_found" });
       const items = await pool.query(
         `SELECT full_type, name, display_category, default_category, item_type, icon_tile, icon_name, weight
@@ -91,8 +99,10 @@ export function createCatalogRouter({ pool }) {
         // [fullType, name, displayCategory, defaultCategory, type, iconTile, iconName, weight (null if unknown)]
         items: items.rows.map(i => [i.full_type, i.name, i.display_category, i.default_category, i.item_type, i.icon_tile, i.icon_name,
           i.weight == null ? null : Math.round(i.weight * 10000) / 10000]),
-        // ATM sell values (baseValue per item) when this version is an economy mod with an ATM.
+        // ATM sell values (per item, before the server's sell %) when this version is an economy mod with an ATM;
+        // atmExtra: firearms that pay less when worn, and tables that replace atm with other mods (atmFor).
         ...(r.atm ? { atm: r.atm } : {}),
+        ...(r.atm_extra ? { atmExtra: r.atm_extra } : {}),
         catNames: Object.fromEntries(names.rows.map(n => [n.category_id, n.display_name])),
       });
       versionCache.set(id, body);
@@ -104,10 +114,12 @@ export function createCatalogRouter({ pool }) {
 
   // Names and icons for a list of item types, for pages that don't load the whole catalog (Stockroom).
   // The base game's name wins when there is one; the icon comes from any newest mod version that draws it.
+  // modIds (optional): the mod.info ids in the user's setup, for ATM values that depend on other mods.
   router.post("/lookup", run(async (req, res) => {
-    const list = req.body?.fullTypes;
-    if (!Array.isArray(list) || list.length > 20000 || list.some(f => typeof f !== "string" || f.length > 200 || !FULL_TYPE.test(f))) {
-      return res.status(400).json({ error: "invalid", message: "Send { fullTypes: [\"Base.Axe\", ...] } (at most 20000)" });
+    const list = req.body?.fullTypes, modIds = req.body?.modIds ?? [];
+    if (!Array.isArray(list) || list.length > 20000 || list.some(f => typeof f !== "string" || f.length > 200 || !FULL_TYPE.test(f))
+      || !Array.isArray(modIds) || modIds.length > 2000 || modIds.some(x => typeof x !== "string" || x.length > 200)) {
+      return res.status(400).json({ error: "invalid", message: "Send { fullTypes: [\"Base.Axe\", ...] } (at most 20000) and optionally { modIds: [...] }" });
     }
     const { rows } = await pool.query(`
       WITH want AS (SELECT DISTINCT unnest($1::text[]) AS ft),
@@ -125,19 +137,24 @@ export function createCatalogRouter({ pool }) {
           SELECT c2.version_id, c2.icon_tile FROM catalog_items c2 JOIN latest l2 ON l2.id = c2.version_id
            WHERE p.icon_tile < 0 AND p.icon_name <> '' AND c2.icon_name = p.icon_name AND c2.icon_tile >= 0 LIMIT 1) ic ON true`,
     [list]);
-    // ATM sell values (baseValue) from economy mods' newest versions; a newer mod's value wins.
-    const atm = (await pool.query(
-      `SELECT DISTINCT ON (k) k AS full_type, (v.atm ->> k)::numeric AS value
-         FROM (SELECT DISTINCT ON (mod_id) id, atm, created_at FROM mod_versions ORDER BY mod_id, created_at DESC) v,
-              LATERAL jsonb_object_keys(v.atm) AS k
-        WHERE v.atm IS NOT NULL AND k = ANY($1::text[])
-        ORDER BY k, v.created_at DESC`, [list])).rows;
+    // ATM sell values from economy mods' newest versions (for this setup's mods: atmFor); a newer mod's value wins.
+    const economies = (await pool.query(
+      `SELECT atm, atm_extra FROM (SELECT DISTINCT ON (mod_id) atm, atm_extra, created_at FROM mod_versions
+                                    ORDER BY mod_id, created_at DESC) v
+        WHERE atm IS NOT NULL ORDER BY created_at`)).rows;
+    const want = new Set(list), atm = {}, condition = new Set();
+    for (const e of economies) {
+      const t = atmFor(e.atm, e.atm_extra, modIds);
+      for (const [ft, v] of Object.entries(t.atm)) if (want.has(ft)) { atm[ft] = Number(v); condition.delete(ft); }
+      for (const ft of t.condition) if (want.has(ft) && ft in t.atm) condition.add(ft);
+    }
     const versions = [...new Set(rows.map(r => r.icon_version).filter(Boolean))];
     const sets = versions.length ? (await pool.query("SELECT id, icons FROM mod_versions WHERE id = ANY($1)", [versions])).rows : [];
     res.json({
       iconSets: Object.fromEntries(sets.map(v => [v.id, { cols: v.icons.cols, perSheet: v.icons.perSheet }])),
       items: Object.fromEntries(rows.map(r => [r.full_type, { name: r.name, icon: r.icon_version ? [r.icon_version, r.icon_tile] : null }])),
-      atm: Object.fromEntries(atm.map(r => [r.full_type, Number(r.value)])),
+      atm,
+      atmCondition: [...condition].sort(),   // firearms: the ATM pays this at full condition, less when worn
     });
   }));
 

@@ -38,7 +38,7 @@ const money = v => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const FT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/;
 const FOLDER = "%USERPROFILE%\\Zomboid\\Lua\\Stockroom";
 
-let chars = [], cur = null, markets = [], choice = null, PRICES = null, LOOK = { items: {}, iconSets: {}, atm: {} };
+let chars = [], cur = null, markets = [], choice = null, PRICES = null, LOOK = { items: {}, iconSets: {}, atm: {}, cond: new Set() };
 // Server Economy's ATM pays baseValue × this percent (the server's SellValuePercent); shared with the editor.
 const ATM_KEY = "bcedit.atmpct.v1";
 let atmPct = 25;
@@ -76,8 +76,12 @@ async function loadLookup() {
   const fts = c ? Object.keys(c.items).filter(f => !(f in LOOK.items)) : [];
   if (!fts.length) return;
   try {
-    const r = await api("POST", "/api/catalog/lookup", { fullTypes: fts });
+    // The setup's mod.info ids (the editor keeps them): some ATM values depend on other mods (Guns of Marz).
+    let modIds = [];
+    try { const v = JSON.parse(localStorage.getItem("bcedit.modids.v1") || "[]"); if (Array.isArray(v)) modIds = v.filter(x => typeof x === "string"); } catch { /* storage unavailable */ }
+    const r = await api("POST", "/api/catalog/lookup", { fullTypes: fts, modIds });
     Object.assign(LOOK.items, r.items); Object.assign(LOOK.iconSets, r.iconSets); Object.assign(LOOK.atm, r.atm || {});
+    for (const ft of r.atmCondition || []) LOOK.cond.add(ft);
     for (const f of fts) if (!(f in LOOK.items)) LOOK.items[f] = null;
   } catch { /* names fall back to the item type */ }
 }
@@ -161,7 +165,7 @@ function render() {
       ${shown.slice(0, LIMIT).map(r => `<tr><td>${icon(r.ft)}</td>
         <td><span class="nm1">${esc(r.name)}</span><span class="sub mono">${esc(r.ft)}${r.known ? "" : " · not in the catalog"}</span></td>
         <td class="num">${r.n.toLocaleString()}</td>
-        ${hasAtm ? (r.atm == null ? '<td class="num muted">–</td>' : `<td class="num" title="Value ${money(LOOK.atm[r.ft])} × ${esc(atmPct)}% · ${money(r.atmTotal)} for all ${r.n.toLocaleString()}">${money(r.atm)}</td>`) : ""}
+        ${hasAtm ? (r.atm == null ? '<td class="num muted">–</td>' : `<td class="num" title="Value ${money(LOOK.atm[r.ft])} × ${esc(atmPct)}% · ${money(r.atmTotal)} for all ${r.n.toLocaleString()}${LOOK.cond.has(r.ft) ? " at full condition; worn ones pay less (down to 25%)" : ""}">${money(r.atm)}</td>`) : ""}
         ${r.p ? `<td class="num" title="Average of ${r.p[3]} listing${r.p[3] === 1 ? "" : "s"}">${money(r.p[0])}</td><td class="num">${money(r.p[1])}</td><td class="num">${money(r.p[2])}</td>${nowCell(r.p)}<td class="num"><b>${money(Math.round(r.value))}</b></td>`
           : `<td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td>`}</tr>`).join("")}
       </tbody></table></div>

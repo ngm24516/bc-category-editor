@@ -115,6 +115,136 @@ class EconomyTests(unittest.TestCase):
             self.assertEqual(atm_values([media]), {"Base.GoldBar": 325, "Base.Necklace_Gold": 3, "LabItems.FrnSilverIngot": 2.5})
             self.assertEqual(atm_values([os.path.join(d, "nothing")]), {})
 
+    def write_economy(self, media, gom=True):
+        """A small Server Economy laid out like the real one (Sellables, Products, Guns of Marz, sandbox options)."""
+        shared = os.path.join(media, "lua", "shared")
+        write(os.path.join(shared, "HZEconomySellables.lua"), "\n".join([
+            "local Sellables = {",
+            '    ["Base.GoldBar"] = { baseValue = 325, restockCategory = "special_rewards", restockOnSell = false },',
+            '    ["OneLifeClothing.Coin"] = { baseValue = 40, restockCategory = "special_rewards" },',
+            '    ["Base.Pistol"] = { baseValue = 7, restockCategory = "special_rewards" },',
+            "}",
+            "local sellCategoryItems = {",
+            "    onelife_currency = {",
+            '        "OneLifeClothing.Coin", -- a coin',
+            "    },",
+            "}",
+            "local Products = require(\"HZEconomyProducts\")",
+            "local buybackCategories = {",
+            '    "weapons_firearms",',
+            '    "ammunition",',
+            '    "magazines",',
+            '    "weapon_attachments",',
+            "}",
+            "for i = 1, #buybackCategories do Sellables[x] = { baseValue = basePrice, buybackPercent = 10 } end",
+            "return Sellables"]))
+        write(os.path.join(shared, "HZEconomyProducts.lua"), "\n".join([
+            "local Products = {",
+            "    weapons_melee = {",
+            '    { id = "weapons_melee_axe", itemType = "Base.Axe", basePrice = 2800 }, -- Axe',
+            "    },",
+            "    weapons_firearms = {",
+            '    { id = "weapons_firearms_pistol", itemType = "Base.Pistol", basePrice = 3000 }, -- Pistol',
+            '    { id = "weapons_firearms_rifle", itemType = "Base.HuntingRifle", basePrice = 5005, buybackPercent = 5 },',
+            "    },",
+            "    ammunition = {",
+            '    { id = "ammunition_9mm", itemType = "Base.Bullets9mm", basePrice = 10 },',
+            '    { id = "ammunition_9mm_box", itemType = "Base.Bullets9mmBox", basePrice = 200 },',
+            "    },",
+            "    magazines = {",
+            '    { id = "magazines_9mm", itemType = "Base.9mmClip", basePrice = 500 },',
+            "    },",
+            "}",
+            'local GunsOfMarzProducts = require("HZEconomyGunsOfMarzProducts")',
+            "GunsOfMarzProducts.apply(Products)",
+            "return Products"]))
+        if gom:
+            write(os.path.join(shared, "HZEconomyGunsOfMarzProducts.lua"), "\n".join([
+                'local REQUIRED_MODS = { "SWMG", "GunsOfMarz" }',
+                "local GROUPS = {",
+                '    pistols = list("DEAGLE GLOCK17"),',
+                '    shotguns = list("AA12"),',
+                '    melee = list("M9_BAYONET"),',
+                '    ammunition = list("9x19_Box 9x19_Carton 12Gauge_Box_Slug"),',
+                '    magazines = list("9x19Magazine17_GLOCK17 12GMagazine20_AA12 9x19Magazine10_P226 556x45Magazine50_STANAG"),',
+                '    attachments = list("Bipod_Folded M&P_Suppressor"),',
+                '    supplies = list("RepairPack"),',
+                "}",
+                "local VANILLA_REPLACED = {}",
+                'for _, itemType in ipairs(list("Base.Pistol Base.Bullets9mmBox Base.9mmClip")) do',
+                "    VANILLA_REPLACED[itemType] = true",
+                "end",
+                "local LOW_BUYBACK = { AA12=true }",
+                'local WEAPON_PRICES = { DEAGLE=11000, GLOCK17=3600, AA12=24000, M9_BAYONET=1800 }',
+                'local MAGAZINE_PRICES = { ["12GMagazine20_AA12"]=12000 }',
+                'local MAGAZINE_CAPACITIES = { ["556x45Magazine50_STANAG"] = 60 }',
+                'local AMMO_PRICES = { ["12Gauge"]=300, ["9x19"]=200 }',
+                "local SPECIAL_AMMO = {",
+                '    Slug={600, "Single projectile."},',
+                "}",
+                'local ATTACHMENT_PRICES = { Bipod_Folded=2500, ["M&P_Suppressor"]=7500 }',
+                "return Catalog"]))
+        write(os.path.join(media, "sandbox-options.txt"), "\n".join([
+            "option ServerEconomy.SellValuePercent", "{", "    type = integer,", "    default = 25,", "}",
+            "option ServerEconomy.OneLifeCurrencySellValuePercent", "{", "    type = integer,", "    default = 50,", "}"]))
+
+    def test_the_atm_buys_back_what_the_gun_shop_sells(self):
+        from pzcatalog.economy import read_economy
+        with tempfile.TemporaryDirectory() as d:
+            media = os.path.join(d, "media")
+            self.write_economy(media, gom=False)
+            e = read_economy([media])
+            self.assertEqual(e["atm"], {
+                "Base.GoldBar": 325,
+                "OneLifeClothing.Coin": 20,          # onelife_currency sells at 50% by default
+                "Base.Pistol": 300,                  # the gun shop's 3000 x 10% replaces the listed 7
+                "Base.HuntingRifle": 250.25,         # 5005 x 10% x (5 / 10)
+                "Base.Bullets9mmBox": 20,            # boxes only: loose bullets aren't bought
+                "Base.9mmClip": 50,
+            })
+            self.assertEqual(e["condition"], ["Base.HuntingRifle", "Base.Pistol"])
+            self.assertEqual(e["variants"], [])
+            self.assertIsNone(read_economy([os.path.join(d, "nothing")]))
+
+    def test_guns_of_marz_prices_are_a_variant_for_setups_with_it(self):
+        from pzcatalog.economy import read_economy
+        with tempfile.TemporaryDirectory() as d:
+            media = os.path.join(d, "media")
+            self.write_economy(media)
+            e = read_economy([media])
+            self.assertEqual(e["atm"]["Base.Pistol"], 300, "without Guns of Marz the vanilla pistol stays")
+            v = e["variants"][0]
+            self.assertEqual(v["requires"], ["SWMG", "GunsOfMarz"])
+            atm = v["atm"]
+            self.assertEqual(atm["Base.Pistol"], 7, "Guns of Marz removes it from the gun shop: only its listed value is left")
+            self.assertNotIn("Base.9mmClip", atm)
+            self.assertEqual(atm["Base.HuntingRifle"], 250.25, "not replaced")
+            self.assertEqual(atm["MarzGuns.DEAGLE"], 1100)
+            self.assertEqual(atm["MarzGuns.AA12"], 1200, "low buyback: 5%")
+            self.assertNotIn("MarzGuns.M9_BAYONET", atm, "melee isn't bought back")
+            self.assertEqual(atm["MarzGuns.9x19_Box"], 20)
+            self.assertEqual(atm["MarzGuns.9x19_Carton"], 240, "a carton is 12 boxes")
+            self.assertEqual(atm["MarzGuns.12Gauge_Box_Slug"], 60, "special ammunition price")
+            self.assertEqual(atm["MarzGuns.9x19Magazine17_GLOCK"], 60, "the mod's fixed item type; 17 rounds: 600")
+            self.assertEqual(atm["MarzGuns.12GMagazine20_AA12"], 600, "listed price, low buyback")
+            self.assertEqual(atm["MarzGuns.9x19Magazine10_P226"], 50, "10 rounds: 500")
+            self.assertEqual(atm["MarzGuns.556x45Magazine50_STANAG"], 175, "tier 50: 3500, low buyback (60 rounds)")
+            self.assertEqual(atm["MarzGuns.M&P_Suppressor"], 375, "suppressors: low buyback")
+            self.assertEqual(atm["MarzGuns.RepairPack"], 200)
+            self.assertEqual(atm["MarzGuns.Bipod_Deployed"], atm["MarzGuns.Bipod_Folded"], "deployed sells as folded")
+            self.assertIn("MarzGuns.DEAGLE", v["condition"])
+            self.assertNotIn("MarzGuns.9x19_Box", v["condition"])
+
+    def test_a_guns_of_marz_file_it_cannot_read_is_skipped(self):
+        from pzcatalog.economy import read_economy
+        with tempfile.TemporaryDirectory() as d:
+            media = os.path.join(d, "media")
+            self.write_economy(media, gom=False)
+            write(os.path.join(media, "lua", "shared", "HZEconomyGunsOfMarzProducts.lua"), "return {}")
+            e = read_economy([media])
+            self.assertEqual(e["variants"], [])
+            self.assertEqual(e["atm"]["Base.Pistol"], 300)
+
     def test_server_economy_is_known_by_its_mod_id_and_its_file(self):
         with tempfile.TemporaryDirectory() as d:
             media = os.path.join(d, "media")

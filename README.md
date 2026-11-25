@@ -56,6 +56,13 @@ Browser ──► Azure Container Apps (one container, one origin)
   is a new version with its whole current table, and the editor only uses the newest. Versions record a data
   `format` (2 = weights and ATM values): the base game seed loads again, and the hourly check re-imports mods
   still in format 1 once.
+- **What the ATM buys back from the gun shop:** Server Economy also buys every firearm, ammunition box/carton/crate,
+  magazine and weapon attachment its shop sells, at 10% of the shop price (5% for some), built by code at the end
+  of `HZEconomySellables.lua`. The importer doesn't run that code: it reads `HZEconomyProducts.lua` and, for Guns of
+  Marz, `HZEconomyGunsOfMarzProducts.lua`'s price tables, and applies the same rules (format 3; mods with an ATM
+  are re-imported once). With both `SWMG` and `GunsOfMarz` in the setup, the Guns of Marz table replaces the plain
+  one (`mod_versions.atm_extra`, migration 012), in the editor and on the Stockroom page (which gets the setup's
+  mod ids from the editor). Firearms pay less when worn (down to 25%); the price shown is at full condition.
 - **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
   `ADMIN_DISCORD_IDS`. Shows the queue, when the importer and the hourly update check run next and last, every
   finished import with its worker log, and each importer run (`importer_runs`). Every mod whose latest import
