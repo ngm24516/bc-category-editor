@@ -193,7 +193,10 @@ def cmd_market():
     with worker.connect() as conn:
         run_id = worker.start_run(conn, "market")
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, api_url, last_snapshot_at FROM marketplaces WHERE enabled ORDER BY created_at")
+            # A marketplace never fully read with owners and a "current" marker (last_crawl_at) is read in full even
+            # when its snapshot hasn't changed, so the current lowest price and seller show without waiting for one.
+            cur.execute("""SELECT id, name, api_url, CASE WHEN last_crawl_at IS NULL THEN NULL ELSE last_snapshot_at END
+                             FROM marketplaces WHERE enabled ORDER BY created_at""")
             markets = cur.fetchall()
         ok = failed = 0
         for market_id, name, api_url, known in markets:
