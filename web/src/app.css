@@ -123,26 +123,36 @@
   .bulk { @apply flex flex-wrap items-center gap-2 border-b px-4 py-2 tabular-nums; border-color: var(--line); background: var(--panel); }
   .thead, .row {
     @apply grid items-center gap-2.5 px-4;
-    grid-template-columns: 30px 32px minmax(200px, 2.2fr) minmax(120px, 1.1fr) minmax(130px, 1.2fr) minmax(170px, 1.5fr) 64px;
+    grid-template-columns: 30px 32px var(--w-item, minmax(200px, 2.2fr)) var(--w-mod, minmax(120px, 1.1fr))
+      var(--w-def, minmax(130px, 1.2fr)) minmax(150px, 1.5fr) 64px;
   }
   .thead { @apply h-9 border-b text-xs font-semibold tracking-wide uppercase; color: var(--muted); border-color: var(--line); background: var(--bg); }
   /* Marketplace prices: three extra columns when a marketplace is chosen (body.prices-on). */
   .col-price { display: none; }
   .prices-on .col-price { display: block; }
   .prices-on .thead, .prices-on .row {
-    grid-template-columns: 30px 32px minmax(200px, 2.2fr) minmax(110px, 1fr) minmax(120px, 1.1fr) 80px 72px 72px minmax(160px, 1.4fr) 64px;
+    grid-template-columns: 30px 32px var(--w-item, minmax(200px, 2.2fr)) var(--w-avg, 84px) var(--w-low, 72px)
+      var(--w-high, 72px) var(--w-mod, minmax(110px, 1fr)) var(--w-def, minmax(120px, 1.1fr)) minmax(150px, 1.4fr) 64px;
   }
-  .row .col-price { @apply text-right font-mono text-[12.5px] tabular-nums; }
+  .row .col-price { @apply pr-3 text-right font-mono text-[12.5px] tabular-nums; }
+  .thead .th { @apply relative flex h-full min-w-0 items-center pr-2; }
+  .thead .th.col-price { @apply justify-end pr-3; }
+  .thead .col-price { display: none; }
+  .prices-on .thead .col-price { display: flex; }
   .thead .sorter {
     @apply flex items-center justify-end gap-1 rounded-none border-0 bg-transparent p-0 text-right text-xs font-semibold tracking-wide uppercase shadow-none;
     color: var(--muted);
   }
-  .prices-on .thead .sorter { display: flex; }
   .thead .sorter:hover { color: var(--ink); background: transparent; }
   .thead .sorter::after { content: "↕"; @apply text-[10px] opacity-40; }
   .thead .sorter.on { color: var(--accent); }
   .thead .sorter[data-dir="desc"]::after { content: "↓"; @apply opacity-100; }
   .thead .sorter[data-dir="asc"]::after { content: "↑"; @apply opacity-100; }
+  /* Column resize handles (Cols in web/index.html) */
+  .thead .rsz { @apply absolute top-1 -right-1.5 bottom-1 z-10 w-3 cursor-col-resize touch-none; }
+  .thead .rsz::after { content: ""; @apply absolute top-0 bottom-0 left-1/2 w-px -translate-x-1/2; background: var(--line); }
+  .thead .rsz:hover::after, .resizing .thead .rsz::after { @apply w-0.5; background: var(--accent); }
+  body.resizing { @apply cursor-col-resize select-none; }
   .scroller { @apply relative min-h-0 flex-1 overflow-auto; }
   .scroller:focus { @apply outline-none; }
   .rows { @apply relative select-none; }
@@ -237,6 +247,7 @@
   .col-mod, .col-def { display: none; }
   .prices-on .thead, .prices-on .row { grid-template-columns: 26px 32px minmax(120px, 2fr) 64px minmax(120px, 1.4fr) 54px; }
   .prices-on .col-lh, .prices-on .thead .col-lh { display: none; }
+  .thead .rsz { display: none; }
 }
 
 @layer components {
