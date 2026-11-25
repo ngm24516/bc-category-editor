@@ -7,7 +7,7 @@ from .scripts import load_translations, scan_media
 # mod's partial redefinition of a vanilla item can be merged with the original.
 RULE_PROPS = ("displaycategory", "type", "itemtype", "tags", "daystotallyrotten", "skilltrained",
               "learnedrecipes", "teachedrecipes", "stresschange", "boredomchange", "unhappychange",
-              "ranged", "obsolete", "icon", "iconsfortexture", "displayname")
+              "ranged", "obsolete", "icon", "iconsfortexture", "displayname", "weight")
 
 
 def _icon_name(props):
@@ -15,12 +15,21 @@ def _icon_name(props):
     return icon[5:] if icon.lower().startswith("item_") else icon
 
 
+def _weight(props):
+    """The script's Weight; the game's default (1.0) when the item doesn't set one."""
+    try:
+        w = float(props.get("weight", "1"))
+    except ValueError:
+        return None
+    return round(w, 4) if 0 <= w < 100000 else None
+
+
 def build_layer(media_roots, bc_lua, base_props=None, mod_ids=(), workshop_ids=(), extra_translation_dirs=()):
     """Returns {items, catNames, sheets, props}.
 
-    items:   [fullType, name, displayCategory, defaultCategory, type, iconTile, iconName] for every item
+    items:   [fullType, name, displayCategory, defaultCategory, type, iconTile, iconName, weight] for every item
              this layer defines (iconTile -1 = no icon of its own; the editor then reuses an earlier
-             layer's icon with the same name).
+             layer's icon with the same name; weight is the game's 1.0 when the script sets none).
     props:   merged rule-relevant props of this layer's items (kept for the base game).
     """
     own, names, catnames = {}, {}, {}
@@ -49,6 +58,6 @@ def build_layer(media_roots, bc_lua, base_props=None, mod_ids=(), workshop_ids=(
         if icon and ("icon" in own[ft] or "iconsfortexture" in own[ft]):
             tile = sheets.add(icon.lower(), lambda i=icon: icons.image(i))
         rows.append([ft, name[:200], p.get("displaycategory", "")[:200], (defaults.get(ft) or "")[:200],
-                     item_type(p)[:60], tile, icon[:200]])
+                     item_type(p)[:60], tile, icon[:200], _weight(p)])
     keep = {ft: {k: v for k, v in p.items() if k in RULE_PROPS} for ft, p in merged.items()}
     return {"items": rows, "catNames": catnames, "sheets": sheets.sheets(), "props": keep}

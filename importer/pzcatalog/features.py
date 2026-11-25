@@ -1,5 +1,6 @@
 """Editor features a mod provides, found by looking at file names only (nothing is opened or run).
 
+atm:       the mod has an ATM that buys items (Server Economy: HZEconomySellables.lua, mod id ServerEconomy).
 stockroom: the mod ships Stockroom, whose saves the editor's "Stockroom books" tool reads. Recognised by
            its save codec, media/lua/<side>/Stockroom/Storage.lua, or by its mod.info id "Stockroom".
 """
@@ -7,9 +8,10 @@ import os
 
 SIGNS = {
     "stockroom": ("stockroom", "storage.lua"),
+    "atm": ("shared", "hzeconomysellables.lua"),
 }
 # mod.info ids that mean a feature (lower case); keep in step with FEATURE_MOD_IDS in server/catalog.js.
-MOD_IDS = {"stockroom": "stockroom"}
+MOD_IDS = {"stockroom": "stockroom", "servereconomy": "atm"}
 
 
 def detect_features(media_roots, mod_ids=()):

@@ -73,6 +73,11 @@
       <select id="marketSel"><option value="">No prices</option></select>
       <div class="help" id="marketInfo" style="margin-top:4px"></div>
     </div>
+    <div id="atmBox" hidden>
+      <label for="atmPct">ATM sell %</label>
+      <input type="number" id="atmPct" min="0" max="1000" step="1" value="25">
+      <div class="help" style="margin-top:4px">Server Economy's ATM pays each item's value × this percent. Use your server's <b>SellValuePercent</b> sandbox setting (the mod's default is 25).</div>
+    </div>
     <div>
       <label for="blk">Category blacklist (Mod Options)</label>
       <input type="text" id="blk" value="Lore">
@@ -93,7 +98,7 @@
       <span class="spacer"></span>
       <span class="muted" id="shownInfo"></span>
     </div>
-    <div class="thead"><span></span><span></span><div class="th" data-col="item">Item<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price" data-col="avg"><button class="sorter" data-sort="avg" title="Average price of every listing seen. Click to sort">Avg</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="low"><button class="sorter" data-sort="low" title="Lowest listing price seen. Click to sort">Low</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="high"><button class="sorter" data-sort="high" title="Highest listing price seen. Click to sort">High</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-mod" data-col="mod">Mod<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-def" data-col="def">Default<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><span>Category</span><span></span></div>
+    <div class="thead"><span></span><span></span><div class="th" data-col="item">Item<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-w" data-col="weight"><button class="sorter" data-sort="weight" title="Weight in the game. Click to sort">Weight</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-atm" data-col="atm"><button class="sorter" data-sort="atm" title="What the Server Economy ATM pays for one (baseValue × ATM sell %). Click to sort">ATM</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price" data-col="avg"><button class="sorter" data-sort="avg" title="Average price of every listing seen. Click to sort">Avg</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="low"><button class="sorter" data-sort="low" title="Lowest listing price seen. Click to sort">Low</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="high"><button class="sorter" data-sort="high" title="Highest listing price seen. Click to sort">High</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="now"><button class="sorter" data-sort="now" title="Cheapest listing on the marketplace right now, and who sells it. Click to sort">Now</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-mod" data-col="mod">Mod<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-def" data-col="def">Default<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><span>Category</span><span></span></div>
     <div class="scroller" id="scroller" tabindex="0" aria-label="Items. Click to select, drag, Ctrl+click, Shift+click, Ctrl+A"><div class="rows" id="rows"></div></div>
   </section>
 
@@ -375,13 +380,13 @@ function applyFilters() {
     }
     return true;
   });
-  if (F.sort && PRICES) {
-    const k = { avg: 0, low: 1, high: 2 }[F.sort.key], dir = F.sort.dir;
-    // Items without a price stay at the end whichever way the column is sorted.
+  if (F.sort) {
+    const val = sortValue(F.sort.key), dir = F.sort.dir;
+    // Items without a value stay at the end whichever way the column is sorted.
     filtered.sort((a, b) => {
-      const pa = PRICES.get(a.ft), pb = PRICES.get(b.ft);
-      if (!pa || !pb) return pa ? -1 : pb ? 1 : 0;
-      return (pa[k] - pb[k]) * dir;
+      const va = val(a), vb = val(b);
+      if (va == null || vb == null) return va != null ? -1 : vb != null ? 1 : 0;
+      return (va - vb) * dir;
     });
   }
   $("rows").style.height = (filtered.length * ROWH) + "px";
@@ -423,12 +428,57 @@ let PRICES = null;
 const money = v => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 function priceCells(ft) {
   const p = PRICES && PRICES.get(ft);
-  if (!p) return '<div class="cell col-price muted">–</div><div class="cell col-price col-lh muted">–</div><div class="cell col-price col-lh muted">–</div>';
+  if (!p) return '<div class="cell col-price muted">–</div><div class="cell col-price col-lh muted">–</div><div class="cell col-price col-lh muted">–</div>' +
+    '<div class="cell col-price col-lh muted">–</div>';
   const n = p[3] + (p[3] === 1 ? " listing" : " listings");
+  // p[4..6]: the cheapest listing right now (last market read), its owner and shop; null when none is listed now.
+  const now = p[4] == null ? '<div class="cell col-price col-lh col-now muted" title="Not listed right now">–</div>'
+    : '<div class="cell col-price col-lh col-now" title="Cheapest now: ' + esc(money(p[4])) + (p[5] ? " from " + esc(p[5]) : "") + (p[6] ? " at " + esc(p[6]) : "") + '">' +
+      money(p[4]) + (p[5] ? '<small>' + esc(p[5]) + '</small>' : "") + '</div>';
   return '<div class="cell col-price" title="Average of ' + n + '">' + money(p[0]) + '</div>' +
     '<div class="cell col-price col-lh" title="Lowest of ' + n + '">' + money(p[1]) + '</div>' +
-    '<div class="cell col-price col-lh" title="Highest of ' + n + '">' + money(p[2]) + '</div>';
+    '<div class="cell col-price col-lh" title="Highest of ' + n + '">' + money(p[2]) + '</div>' + now;
 }
+// Weight (always) and Server Economy's ATM sell price (when a mod in the setup has an ATM).
+// ATM: full type -> baseValue from the mod's HZEconomySellables.lua; the ATM pays baseValue × ATM sell % / 100.
+let ATM = new Map();
+const ATM_KEY = "bcedit.atmpct.v1";
+let atmPct = 25;
+try { const v = Number(localStorage.getItem(ATM_KEY)); if (localStorage.getItem(ATM_KEY) !== null && v >= 0 && v <= 1000) atmPct = v; } catch (e) { /* storage unavailable */ }
+const atmPrice = ft => ATM.has(ft) ? ATM.get(ft) * atmPct / 100 : null;
+const fmtWeight = w => w.toLocaleString(undefined, { maximumFractionDigits: 3 });
+function atmCell(ft) {
+  const p = atmPrice(ft);
+  return p == null ? '<div class="cell col-atm num muted">–</div>'
+    : '<div class="cell col-atm num" title="Value ' + money(ATM.get(ft)) + ' × ' + atmPct + '%">' + money(p) + '</div>';
+}
+function sortValue(key) {
+  if (key === "weight") return it => it.weight;
+  if (key === "atm") return it => atmPrice(it.ft);
+  const k = { avg: 0, low: 1, high: 2, now: 4 }[key];
+  return it => { const p = PRICES && PRICES.get(it.ft); return p ? p[k] ?? null : null; };
+}
+// The list's columns depend on what's showing (ATM, marketplace prices), so the grid template is built here;
+// each width can be dragged (Cols below) and is a CSS variable.
+const COL_DEFAULT = { item: "minmax(200px, 2.2fr)", weight: "68px", atm: "76px", avg: "84px", low: "72px", high: "72px", now: "120px",
+  mod: "minmax(110px, 1fr)", def: "minmax(120px, 1.1fr)" };
+function layoutCols() {
+  const w = c => "var(--w-" + c + ", " + COL_DEFAULT[c] + ")";
+  const cols = ["30px", "32px", w("item"), w("weight")];
+  if (ATM.size) cols.push(w("atm"));
+  if (PRICES) cols.push(w("avg"), w("low"), w("high"), w("now"));
+  cols.push(w("mod"), w("def"), "minmax(150px, 1.4fr)", "64px");
+  document.documentElement.style.setProperty("--cols", cols.join(" "));
+}
+$("atmPct").value = atmPct;
+$("atmPct").addEventListener("input", () => {
+  const v = Number($("atmPct").value);
+  if (!(v >= 0 && v <= 1000)) return;
+  atmPct = v;
+  try { localStorage.setItem(ATM_KEY, String(v)); } catch (e) { /* storage unavailable */ }
+  applyFilters();
+});
+
 function renderSorters() {
   document.querySelectorAll(".sorter").forEach(b => {
     const on = F.sort && F.sort.key === b.dataset.sort;
@@ -453,7 +503,7 @@ const Cols = (() => {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
   const apply = () => {
-    for (const col of ["item", "avg", "low", "high", "mod", "def"]) {
+    for (const col of ["item", "weight", "atm", "avg", "low", "high", "now", "mod", "def"]) {
       if (saved[col]) document.documentElement.style.setProperty("--w-" + col, saved[col] + "px");
       else document.documentElement.style.removeProperty("--w-" + col);
     }
@@ -501,6 +551,8 @@ function renderRows(force) {
     h += '<div class="row' + (sel ? " sel" : "") + (it.ft === focusFt ? " focus" : "") + '" style="top:' + (i * ROWH) + 'px" data-i="' + i + '">' +
       '<input type="checkbox" aria-label="Select ' + esc(it.name) + '"' + (sel ? " checked" : "") + '>' + iconHtml(it.icon, 32) +
       '<div class="nm"><div title="' + esc(it.name) + '">' + esc(it.name) + (it.unknown ? ' <span class="chip warn">not on this PC</span>' : "") + '</div><div class="ft">' + esc(it.ft) + '</div></div>' +
+      '<div class="cell col-w num">' + (it.weight == null ? '<span class="muted">–</span>' : fmtWeight(it.weight)) + '</div>' +
+      atmCell(it.ft) +
       priceCells(it.ft) +
       '<div class="cell col-mod muted" title="' + esc(modLabel(it)) + '">' + esc(modLabel(it)) + '</div>' +
       '<div class="cell col-def" title="' + esc(defaultOf(it)) + '">' + esc(catName(defaultOf(it))) + '</div>' +
@@ -1076,22 +1128,30 @@ async function buildCatalog() {
 
   MODS = layers.map(l => l.kind === "base" ? ["Project Zomboid", "vanilla base game", "", true] : [l.name, l.workshopId || "", l.workshopId || "", true]);
   ICONSETS = layers.map((l, i) => ({ vid: l.versionId, cols: datas[i].icons.cols, perSheet: datas[i].icons.perSheet }));
-  CATNAMES = {};
+  CATNAMES = {}; ATM = new Map();
   const byFt = new Map(), iconByName = new Map();
   datas.forEach((d, li) => {
     for (const r of d.items) if (r[5] >= 0 && r[6]) iconByName.set(r[6].toLowerCase(), li * 1e6 + r[5]);
-    for (const [ft, name, dc, def, type, tile, iconName] of d.items) {
+    for (const [ft, name, dc, def, type, tile, iconName, weight] of d.items) {
       const icon = tile >= 0 ? li * 1e6 + tile : (iconName ? iconByName.get(iconName.toLowerCase()) ?? -1 : -1);
       const it = byFt.get(ft);
-      if (!it) byFt.set(ft, { ft, name, dc, def, type, src: [li], icon });
-      else { it.name = name; it.dc = dc; it.def = def; it.type = type; if (icon >= 0) it.icon = icon; if (!it.src.includes(li)) it.src.push(li); }
+      if (!it) byFt.set(ft, { ft, name, dc, def, type, src: [li], icon, weight: weight ?? null });
+      else {
+        it.name = name; it.dc = dc; it.def = def; it.type = type; if (icon >= 0) it.icon = icon; if (!it.src.includes(li)) it.src.push(li);
+        if (weight != null) it.weight = weight;   // versions imported before weights were recorded have none
+      }
     }
     Object.assign(CATNAMES, d.catNames);
+    if (d.atm) for (const [ft, v] of Object.entries(d.atm)) ATM.set(ft, v);
   });
   ITEMS = [...byFt.values()].map(it => ({ ...it, key: makeKey(it.name, it.ft) }));
   BYFT = new Map(ITEMS.map(it => [it.ft, it]));
   ensureUnknownItems();
   updateFeatureButtons();
+  $("atmBox").hidden = !ATM.size;
+  document.body.classList.toggle("atm-on", ATM.size > 0);
+  if (!ATM.size && F.sort && F.sort.key === "atm") F.sort = null;
+  layoutCols();
 }
 
 // Tools that only make sense with a particular mod: shown when a mod in this setup provides the feature
@@ -1118,6 +1178,7 @@ function renderModList() {
   const rows = ['<li class="base"><span class="nm">Project Zomboid<small>Base game · ' + esc(BASE ? BASE.label : "") + ' · always included</small></span></li>'];
   MODLIST.forEach((id, i) => {
     const m = MODINFO.get(id);
+    if (!m) return;   // still loading (e.g. the account's setup is arriving); drawn again once it has
     rows.push('<li><span class="nm">' + esc(m.name) + '<small>' + (m.itemCount || 0).toLocaleString() + ' items · updated ' + esc(m.label || "") + (m.addedBy ? ' · added by ' + esc(m.addedBy) : '') + wsLink(m.workshopId) + '</small></span>' +
       '<button data-up="' + i + '" title="Load earlier"' + (i ? "" : " disabled") + '>↑</button>' +
       '<button data-down="' + i + '" title="Load later"' + (i < MODLIST.length - 1 ? "" : " disabled") + '>↓</button>' +
@@ -1448,7 +1509,7 @@ const Market = (() => {
     const m = markets.find(x => x.id === choice);
     if (!m) { $("marketInfo").textContent = "Pick a marketplace to see average, low and high prices for each item."; return; }
     const when = m.lastSnapshotAt ? new Date(m.lastSnapshotAt).toLocaleString() : "not yet";
-    $("marketInfo").textContent = (PRICES ? PRICES.size.toLocaleString() : "0") + " items priced from every listing seen; last snapshot " + when + ". Sort with the Avg, Low and High column titles.";
+    $("marketInfo").textContent = (PRICES ? PRICES.size.toLocaleString() : "0") + " items priced from every listing seen; last snapshot " + when + ". Now is the cheapest listing at the moment and who sells it. Sort with the column titles.";
   }
 
   async function load() {
@@ -1459,9 +1520,9 @@ const Market = (() => {
         if (r.ok) PRICES = new Map(Object.entries((await r.json()).items));
       } catch (e) { /* offline: no prices */ }
     }
-    if (!PRICES) F.sort = null;
+    if (!PRICES && F.sort && ["avg", "low", "high", "now"].includes(F.sort.key)) F.sort = null;
     document.body.classList.toggle("prices-on", !!PRICES);
-    renderSorters(); applyFilters(); info();
+    layoutCols(); renderSorters(); applyFilters(); info();
   }
 
   async function choose(id) {

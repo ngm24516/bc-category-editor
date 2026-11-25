@@ -19,7 +19,7 @@ const SEED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "
 
 // mod.info ids that mean a feature even when the importer didn't spot it in the files (Stockroom's own
 // mod id; see importer/pzcatalog/features.py). Lower case. Applies to versions imported before detection, too.
-export const FEATURE_MOD_IDS = { stockroom: "stockroom" };
+export const FEATURE_MOD_IDS = { stockroom: "stockroom", servereconomy: "atm" };
 const FEATURE_MOD_IDS_SQL = Object.entries(FEATURE_MOD_IDS).map(([id, f]) => `('${id}', '${f}')`).join(", ");
 
 // Newest version of each mod, with the fields the editor's mod list needs.
@@ -79,16 +79,20 @@ export function createCatalogRouter({ pool }) {
     let body = versionCache.get(id);
     if (!body) {
       const v = await pool.query(
-        "SELECT v.id, v.mod_id, v.label, v.icons, m.name FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE v.id = $1", [id]);
+        "SELECT v.id, v.mod_id, v.label, v.icons, v.atm, m.name FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE v.id = $1", [id]);
       if (!v.rowCount) return res.status(404).json({ error: "not_found" });
       const items = await pool.query(
-        `SELECT full_type, name, display_category, default_category, item_type, icon_tile, icon_name
+        `SELECT full_type, name, display_category, default_category, item_type, icon_tile, icon_name, weight
            FROM catalog_items WHERE version_id = $1 ORDER BY full_type`, [id]);
       const names = await pool.query("SELECT category_id, display_name FROM catalog_category_names WHERE version_id = $1", [id]);
       const r = v.rows[0];
       body = JSON.stringify({
         id: r.id, modId: r.mod_id, name: r.name, label: r.label, icons: r.icons,
-        items: items.rows.map(i => [i.full_type, i.name, i.display_category, i.default_category, i.item_type, i.icon_tile, i.icon_name]),
+        // [fullType, name, displayCategory, defaultCategory, type, iconTile, iconName, weight (null if unknown)]
+        items: items.rows.map(i => [i.full_type, i.name, i.display_category, i.default_category, i.item_type, i.icon_tile, i.icon_name,
+          i.weight == null ? null : Math.round(i.weight * 10000) / 10000]),
+        // ATM sell values (baseValue per item) when this version is an economy mod with an ATM.
+        ...(r.atm ? { atm: r.atm } : {}),
         catNames: Object.fromEntries(names.rows.map(n => [n.category_id, n.display_name])),
       });
       versionCache.set(id, body);
@@ -151,13 +155,15 @@ export async function seedBaseGame(pool, log = console.log, dir = SEED_DIR) {
     await client.query("SELECT pg_advisory_xact_lock(727402)");
     let mod = (await client.query("SELECT id FROM mods WHERE kind = 'base'")).rows[0];
     if (!mod) mod = (await client.query("INSERT INTO mods (kind, name) VALUES ('base', 'Project Zomboid') RETURNING id")).rows[0];
-    const exists = await client.query("SELECT 1 FROM mod_versions WHERE mod_id = $1 AND label = $2", [mod.id, seed.label]);
+    // A newer data format of the same game build (e.g. with weights) is loaded as a new version.
+    const exists = await client.query("SELECT 1 FROM mod_versions WHERE mod_id = $1 AND label = $2 AND format >= $3",
+      [mod.id, seed.label, seed.format || 1]);
     if (exists.rowCount) { await client.query("COMMIT"); return false; }
 
     const { rows: [ver] } = await client.query(
-      `INSERT INTO mod_versions (mod_id, label, game_version, icons, base_props, item_count)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [mod.id, seed.label, seed.game, seed.icons, seed.props, seed.items.length]);
+      `INSERT INTO mod_versions (mod_id, label, game_version, icons, base_props, item_count, format)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [mod.id, seed.label, seed.game, seed.icons, seed.props, seed.items.length, seed.format || 1]);
     await insertItems(client, ver.id, seed.items);
     await insertCategoryNames(client, ver.id, seed.catNames);
     for (let i = 0; i < seed.icons.sheets; i++) {
@@ -165,7 +171,7 @@ export async function seedBaseGame(pool, log = console.log, dir = SEED_DIR) {
         [ver.id, i, await readFile(path.join(dir, `icons${i}.webp`))]);
     }
     await client.query("COMMIT");
-    log(`Loaded the base game (${seed.label}, ${seed.items.length} items) into the catalog`);
+    log(`Loaded the base game (${seed.label}, format ${seed.format || 1}, ${seed.items.length} items) into the catalog`);
     return true;
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
@@ -180,9 +186,9 @@ export async function insertItems(db, versionId, items) {
     const chunk = items.slice(i, i + 2000);
     const col = k => chunk.map(r => r[k]);
     await db.query(
-      `INSERT INTO catalog_items (version_id, full_type, name, display_category, default_category, item_type, icon_tile, icon_name)
-       SELECT $1, * FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::int[], $8::text[])`,
-      [versionId, col(0), col(1), col(2), col(3), col(4), col(5), col(6)]);
+      `INSERT INTO catalog_items (version_id, full_type, name, display_category, default_category, item_type, icon_tile, icon_name, weight)
+       SELECT $1, * FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::int[], $8::text[], $9::real[])`,
+      [versionId, col(0), col(1), col(2), col(3), col(4), col(5), col(6), chunk.map(r => r[7] ?? null)]);
   }
 }
 

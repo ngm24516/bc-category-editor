@@ -73,7 +73,8 @@ class LayerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             media = os.path.join(d, "media")
             write(os.path.join(media, "scripts", "items.txt"),
-                  "module Base {\n item Axe {\n DisplayCategory = Weapon,\n }\n}\nmodule MyMod {\n item Gun {\n Type = Weapon,\n Icon = MyGun,\n }\n}")
+                  "module Base {\n item Axe {\n DisplayCategory = Weapon,\n }\n}\nmodule MyMod {\n item Gun {\n Type = Weapon,\n Icon = MyGun,\n Weight = 1.25,\n }\n"
+                  " item Note {\n Type = Normal,\n }\n}")
             write(os.path.join(media, "lua", "shared", "Translate", "EN", "ItemName.json"), '{ "ItemName_MyMod.Gun": "My Gun" }')
             buf = io.BytesIO()
             Image.new("RGBA", (16, 16), (255, 0, 0, 255)).save(buf, "PNG")
@@ -82,7 +83,7 @@ class LayerTests(unittest.TestCase):
                 f.write(buf.getvalue())
             bc = os.path.join(d, "bc")
             os.makedirs(bc)
-            base = {"Base.Axe": {"type": "Weapon", "icon": "Axe", "displaycategory": "Tool"}}
+            base = {"Base.Axe": {"type": "Weapon", "icon": "Axe", "displaycategory": "Tool", "weight": "3"}}
             layer = build_layer([media], bc, base_props=base)
             rows = {r[0]: r for r in layer["items"]}
             self.assertEqual(rows["MyMod.Gun"][1], "My Gun")
@@ -91,6 +92,35 @@ class LayerTests(unittest.TestCase):
             self.assertEqual(rows["Base.Axe"][5], -1, "no icon of its own: the editor reuses the base game's")
             self.assertEqual(rows["Base.Axe"][6], "Axe")
             self.assertEqual(len(layer["sheets"]), 1)
+            self.assertEqual(rows["MyMod.Gun"][7], 1.25, "the script's Weight")
+            self.assertEqual(rows["Base.Axe"][7], 3.0, "a partial redefinition keeps the base game's weight")
+            self.assertEqual(rows["MyMod.Note"][7], 1.0, "no Weight: the game's default")
+            self.assertIn("weight", layer["props"]["MyMod.Gun"], "kept for later layers")
+
+
+class EconomyTests(unittest.TestCase):
+    def test_atm_values_are_read_from_the_sellables_table_without_running_it(self):
+        from pzcatalog.economy import atm_values
+        with tempfile.TemporaryDirectory() as d:
+            media = os.path.join(d, "media")
+            write(os.path.join(media, "lua", "shared", "HZEconomySellables.lua"), "\n".join([
+                "local Sellables = {",
+                '    ["Base.GoldBar"] = { baseValue = 325, restockCategory = "special_rewards", restockOnSell = false }, -- 8 small ingots',
+                '    ["Base.Necklace_Gold"] = { baseValue = 3, restockCategory = "clothing", restockOnSell = false },',
+                '    ["LabItems.FrnSilverIngot"]={baseValue=2.5,restockCategory="x"},',
+                '    -- ["Base.Commented"] = { baseValue = 9 },',
+                '    ["Base.NoValue"] = { restockCategory = "clothing" },',
+                '    ["not an item"] = { baseValue = 4 },',
+                "}", "for _, x in pairs(Sellables) do x.sellCategory = 'junk' end", "return Sellables"]))
+            self.assertEqual(atm_values([media]), {"Base.GoldBar": 325, "Base.Necklace_Gold": 3, "LabItems.FrnSilverIngot": 2.5})
+            self.assertEqual(atm_values([os.path.join(d, "nothing")]), {})
+
+    def test_server_economy_is_known_by_its_mod_id_and_its_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            media = os.path.join(d, "media")
+            write(os.path.join(media, "lua", "shared", "HZEconomySellables.lua"), "local Sellables = {}")
+            self.assertEqual(detect_features([media]), ["atm"])
+        self.assertEqual(detect_features([], ["ServerEconomy"]), ["atm"])
 
 
 class FeatureTests(unittest.TestCase):

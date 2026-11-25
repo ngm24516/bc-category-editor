@@ -119,7 +119,7 @@ def page_url(api_url, page):
 
 
 def clean_listing(x):
-    """(listing_id, price, full_type, quantity, shop_name) or None for anything malformed."""
+    """(listing_id, price, full_type, quantity, shop_name, owner_name) or None for anything malformed."""
     if not isinstance(x, dict):
         return None
     lid, ft, price = x.get("listing_id"), x.get("full_type"), x.get("price")
@@ -132,7 +132,8 @@ def clean_listing(x):
     qty = x.get("quantity")
     qty = qty if isinstance(qty, int) and not isinstance(qty, bool) and 0 <= qty < 2**31 else None
     shop = x.get("shop_name") if isinstance(x.get("shop_name"), str) else None
-    return (lid, round(float(price), 2), ft, qty, shop[:120] if shop else None)
+    owner = x.get("owner_display_name") if isinstance(x.get("owner_display_name"), str) else None
+    return (lid, round(float(price), 2), ft, qty, shop[:120] if shop else None, owner[:120] if owner else None)
 
 
 def snapshot_time(body):
@@ -175,14 +176,16 @@ def read_marketplace(api_url, known_snapshot=None):
 # ------------------------------------------------------------------ the job
 def save(conn, market_id, snap, rows):
     with conn.cursor() as cur:
-        cur.executemany("""INSERT INTO market_listings (marketplace_id, listing_id, price, full_type, quantity, shop_name)
-                           VALUES (%s, %s, %s, %s, %s, %s)
+        # now() is the transaction's start time, so every listing in this read gets the same last_seen as
+        # last_crawl_at: "current" listings are exactly those with last_seen = last_crawl_at.
+        cur.executemany("""INSERT INTO market_listings (marketplace_id, listing_id, price, full_type, quantity, shop_name, owner_name)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s)
                            ON CONFLICT (marketplace_id, listing_id, price) DO UPDATE
                               SET last_seen = now(), quantity = EXCLUDED.quantity, shop_name = EXCLUDED.shop_name,
-                                  full_type = EXCLUDED.full_type""",
+                                  owner_name = EXCLUDED.owner_name, full_type = EXCLUDED.full_type""",
                         [(market_id, *r) for r in rows])
-        cur.execute("""UPDATE marketplaces SET last_checked_at = now(), last_snapshot_at = %s, last_listings = %s,
-                              last_error = NULL WHERE id = %s""", (snap, len(rows), market_id))
+        cur.execute("""UPDATE marketplaces SET last_checked_at = now(), last_crawl_at = now(), last_snapshot_at = %s,
+                              last_listings = %s, last_error = NULL WHERE id = %s""", (snap, len(rows), market_id))
     conn.commit()
 
 

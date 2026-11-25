@@ -89,10 +89,16 @@ class WorkerTests(unittest.TestCase):
         mod = os.path.join(cls.downloads, "2200148440", "mods", "Guns", "42", "media")
         write(os.path.join(cls.downloads, "2200148440", "mods", "Guns", "42", "mod.info"), "id=GunsMod\nname=Guns\n")
         write(os.path.join(mod, "scripts", "guns.txt"),
-              "module Guns {\n item Pistol {\n  ItemType = base:weapon,\n  Icon = Pistol,\n }\n}\n")
+              "module Guns {\n item Pistol {\n  ItemType = base:weapon,\n  Icon = Pistol,\n  Weight = 1.5,\n }\n}\n")
         write(os.path.join(mod, "lua", "shared", "Translate", "EN", "ItemName.json"), '{ "ItemName_Guns.Pistol": "Pistol" }')
         png(os.path.join(mod, "textures", "Item_Pistol.png"))
         os.makedirs(os.path.join(cls.downloads, "3000000009", "mods", "OldMod", "media"))  # Build 41 only
+        # An economy mod with an ATM (Server Economy's sellables table).
+        se = os.path.join(cls.downloads, "3728629828", "mods", "Server Economy", "42")
+        write(os.path.join(se, "mod.info"), "id=ServerEconomy\nname=Server Economy\n")
+        write(os.path.join(se, "media", "lua", "shared", "HZEconomySellables.lua"),
+              'local Sellables = {\n    ["Base.GoldBar"] = { baseValue = 325, restockCategory = "special_rewards" },\n'
+              '    ["Guns.Pistol"] = { baseValue = 40, restockCategory = "x" },\n}\nreturn Sellables\n')
         # A mod that ships Stockroom (the editor's Stockroom tool is offered only with it).
         sr = os.path.join(cls.downloads, "3100000001", "mods", "Stockroom", "42", "media")
         write(os.path.join(sr, "lua", "client", "Stockroom", "Storage.lua"), "-- codec\n")
@@ -111,7 +117,8 @@ class WorkerTests(unittest.TestCase):
         PAGES.clear()
         STEAM.update({"2200148440": {"title": "Guns", "time_updated": 1790000000},
                       "3000000009": {"title": "Old mod", "time_updated": 1790000000},
-                      "3100000001": {"title": "Stockroom pack", "time_updated": 1790000000}})
+                      "3100000001": {"title": "Stockroom pack", "time_updated": 1790000000},
+                      "3728629828": {"title": "Server Economy", "time_updated": 1790000000}})
         with psycopg.connect(DB, autocommit=True) as c:
             c.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         subprocess.run(["node", "server/migrate.js"], cwd=ROOT, env={**os.environ, "DATABASE_URL": DB},
@@ -180,6 +187,52 @@ class WorkerTests(unittest.TestCase):
         self.assertIsNone(worker.parse_item_page("<html><title>Steam Community :: Error</title></html>"))
         d = worker.parse_item_page(changelog_page("Riku Emporium B42"))
         self.assertEqual((d["title"], d["app"], d["updated"]), ("Riku Emporium B42", 108600, None))
+
+    def test_weights_atm_values_and_the_data_format_are_recorded(self):
+        import worker
+        from pzcatalog import FORMAT
+        self.queue("2200148440")
+        self.queue("3728629828")
+        self.assertEqual(worker.cmd_run(), 2)
+        self.assertEqual(self.one("SELECT weight FROM catalog_items WHERE full_type = 'Guns.Pistol'")[0], 1.5)
+        fmt, atm, features = self.one("""SELECT v.format, v.atm, v.features FROM mod_versions v JOIN mods m ON m.id = v.mod_id
+                                           WHERE m.workshop_id = '3728629828'""")
+        self.assertEqual((fmt, atm, features), (FORMAT, {"Base.GoldBar": 325, "Guns.Pistol": 40}, ["atm"]))
+        self.assertIsNone(self.one("SELECT v.atm FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE m.workshop_id = '2200148440'")[0])
+
+    def test_an_economy_mod_update_replaces_its_atm_values_entirely(self):
+        import worker
+        sellables = os.path.join(self.downloads, "3728629828", "mods", "Server Economy", "42", "media", "lua", "shared",
+                                 "HZEconomySellables.lua")
+        original = open(sellables).read()
+        try:
+            self.queue("3728629828")
+            worker.cmd_run()
+            # The mod updates on Steam: Gold Bar repriced, Pistol dropped, Diamond added.
+            write(sellables, 'local Sellables = {\n    ["Base.GoldBar"] = { baseValue = 400 },\n    ["Base.Diamond"] = { baseValue = 25 },\n}\n')
+            STEAM["3728629828"]["time_updated"] = 1795000000
+            self.assertEqual(worker.cmd_check_updates(), 1, "updated with the rest of the mods")
+            worker.cmd_run()
+            newest = self.one("""SELECT v.atm FROM mod_versions v JOIN mods m ON m.id = v.mod_id
+                                  WHERE m.workshop_id = '3728629828' ORDER BY v.created_at DESC LIMIT 1""")[0]
+            self.assertEqual(newest, {"Base.GoldBar": 400, "Base.Diamond": 25}, "exactly the mod's current table")
+        finally:
+            write(sellables, original)
+            STEAM["3728629828"]["time_updated"] = 1790000000
+
+    def test_mods_in_an_older_data_format_are_imported_again_once(self):
+        import worker
+        self.queue("2200148440")
+        worker.cmd_run()
+        with psycopg.connect(DB) as c:   # pretend it was imported before weights were recorded
+            c.execute("UPDATE mod_versions SET format = 1 WHERE mod_id IN (SELECT id FROM mods WHERE workshop_id = '2200148440')")
+            c.execute("UPDATE catalog_items SET weight = NULL WHERE full_type = 'Guns.Pistol'")
+        self.assertEqual(worker.cmd_check_updates(), 1, "queued although Steam shows no change")
+        self.assertEqual(worker.cmd_run(), 1)
+        rows = self.one_all("""SELECT v.format, (SELECT weight FROM catalog_items c WHERE c.version_id = v.id AND full_type = 'Guns.Pistol')
+                                 FROM mod_versions v JOIN mods m ON m.id = v.mod_id WHERE m.workshop_id = '2200148440' ORDER BY v.format""")
+        self.assertEqual(rows, [(1, None), (2, 1.5)], "a new version; the old one is left as it was")
+        self.assertEqual(worker.cmd_check_updates(), 0, "not again")
 
     def test_the_same_update_twice_writes_one_version(self):
         import worker
