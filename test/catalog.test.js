@@ -177,6 +177,13 @@ describe("mod search", () => {
     const gom = await (await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: ["SWMG", "gunsofmarz"] })).json();
     assert.deepEqual([gom.atm, gom.atmCondition], [{ "Base.GoldBar": 325, "MarzGuns.DEAGLE": 1100 }, ["MarzGuns.DEAGLE"]],
       "the Guns of Marz table replaces the plain one (case doesn't matter)");
+    await pool.query("UPDATE mod_versions SET atm_extra = atm_extra || $2 WHERE id = $1", [eco.versionId,
+      { raw: { "Base.GoldBar": [325, "precious_metals"], "Base.Pistol": [3000, "weapons_firearms", "weapons_firearms", 1] },
+        defaults: { SellValuePercent: 25 } }]);
+    const raw = await (await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts })).json();
+    assert.deepEqual([raw.atmRaw, raw.atmDefaults],
+      [{ "Base.GoldBar": [325, "precious_metals"], "Base.Pistol": [3000, "weapons_firearms", "weapons_firearms", 1] }, { SellValuePercent: 25 }],
+      "the numbers behind each value, for the server's own settings");
     assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: "SWMG" })).status, 400);
     assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: [3] })).status, 400);
   });

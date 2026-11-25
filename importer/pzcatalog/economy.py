@@ -16,13 +16,17 @@ reads the same data files and applies the same small rules, mirroring:
       ammunition, magazines and attachments from its price tables (buyback 5% for "low buyback" items)
   media/sandbox-options.txt                      defaults: SellValuePercent 25, <Category>SellValuePercent ...
 
-HZEconomyShared.getAtmSellRawValue pays value x SellValuePercent x the item's sell-category percent. We store
-value x the category percent's default (e.g. OneLife coins 50%), and the editor applies SellValuePercent (the
-"ATM sell %" the user sets, 25 by default). Sandbox price percents are taken at their defaults.
+HZEconomyShared.getAtmSellRawValue pays value x SellValuePercent x the item's sell-category percent, where a
+buyback's value is floor(basePrice x GlobalPricePercent x <Category>PricePercent) x <Category>SellbackPercent
+(10 when unset) x (product buybackPercent / 10). All of those are the server's sandbox settings, so besides `atm`
+(the value at the mod's defaults, before SellValuePercent) we store what the editor needs to redo the sum with the
+server's own settings (web/atm.js, which must match atm_value below):
+  raw: {fullType: [value, sellCategory]} or, for buybacks, [shop basePrice, sellCategory, shopCategory, scale]
+  defaults: the mod's sandbox defaults for the options in SANDBOX_OPTIONS
 
 read_economy() returns None for other mods, else:
-  { "atm": {fullType: value}, "condition": [fullTypes that pay less when worn],
-    "variants": [{ "requires": ["SWMG", "GunsOfMarz"], "atm": {...}, "condition": [...] }] }
+  { "atm": {fullType: value}, "raw": {...}, "condition": [fullTypes that pay less when worn], "defaults": {...},
+    "variants": [{ "requires": ["SWMG", "GunsOfMarz"], "atm": {...}, "raw": {...}, "condition": [...] }] }
 """
 import math
 import os
@@ -40,14 +44,20 @@ FIELD_STR = r'\b{}\s*=\s*"([^"]*)"'
 PRODUCT = re.compile(r'^\s*\{[^}]*\bitemType\s*=\s*"(' + FULL_TYPE + r')"[^}]*\}')
 CATEGORY = re.compile(r"^\s{4}([a-z_]+)\s*=\s*\{\s*$")
 
-# The shop's category -> its "<Name>PricePercent" sandbox option (HZEconomyShared.getSandbox).
+# Sandbox option names (HZEconomyShared.getSandbox). Shop category -> "<Name>PricePercent" and
+# "<Name>SellbackPercent"; sell category -> "<Name>SellValuePercent". web/atm.js has the same tables.
 PRICE_OPTIONS = {"weapons_melee": "Melee", "weapons_firearms": "Firearms", "ammunition": "Ammunition",
                  "magazines": "Magazines", "weapon_attachments": "WeaponAttachments"}
-# Sell category -> its "<Name>SellValuePercent" sandbox option.
+SELLBACK_OPTIONS = {"weapons_firearms": "Firearms", "ammunition": "Ammunition", "magazines": "Magazines",
+                    "weapon_attachments": "WeaponAttachments"}
 SELL_OPTIONS = {"general": "General", "junk_collectibles": "JunkCollectibles", "valuables": "Valuables",
                 "farm_produce": "FarmProduce", "herbs_medical": "HerbsMedical", "hemp_products": "HempProducts",
                 "onelife_currency": "OneLifeCurrency", "precious_metals": "PreciousMetals", "lab_ingots": "LabIngots",
-                "weapons_firearms": "Firearms", "ammunition": "AmmunitionCategory"}
+                "weapons_firearms": "Firearms", "ammunition": "AmmunitionCategory", "magazines": "MagazinesCategory",
+                "weapon_attachments": "WeaponAttachmentsCategory"}
+SANDBOX_OPTIONS = (["SellValuePercent", "GlobalPricePercent"] + [v + "PricePercent" for v in PRICE_OPTIONS.values()]
+                   + [v + "SellbackPercent" for v in SELLBACK_OPTIONS.values()]
+                   + [v + "SellValuePercent" for v in SELL_OPTIONS.values()])
 DEFAULT_BUYBACK = ["weapons_firearms", "ammunition", "magazines", "weapon_attachments"]
 
 
@@ -201,26 +211,40 @@ def _gom_products(text):
     return products, set(replaced.group(1).split())
 
 
-def _sell_table(sellables, products, buyback, sandbox):
-    """{fullType: value with the sell category's default percent} and the condition-scaled types."""
-    pct = lambda opt, default=100: sandbox.get(opt, default)  # noqa: E731
-    global_pct = pct("GlobalPricePercent")
-    out, condition = {}, []
+def atm_value(raw, settings, with_sell_percent=False):
+    """What the ATM pays for one (full condition) from a raw entry and sandbox settings {option: number}.
+
+    Without with_sell_percent: before SellValuePercent (the stored `atm` values). Same as web/atm.js."""
+    pct = lambda opt, default=100: settings.get(opt, default)  # noqa: E731
+    value, sell_cat = raw[0], raw[1]
+    if len(raw) > 2:
+        cat, scale = raw[2], raw[3]
+        vend = max(1, math.floor(max(1, value) * pct("GlobalPricePercent") / 100
+                                 * (pct(PRICE_OPTIONS[cat] + "PricePercent") if cat in PRICE_OPTIONS else 100) / 100))
+        sellback = pct(SELLBACK_OPTIONS[cat] + "SellbackPercent", 10) if cat in SELLBACK_OPTIONS else 10
+        value = vend * max(0, sellback) / 100 * max(0, scale)
+    value *= (pct(SELL_OPTIONS[sell_cat] + "SellValuePercent") if sell_cat in SELL_OPTIONS else 100) / 100
+    if with_sell_percent:
+        value *= pct("SellValuePercent", 100) / 100
+    return int(value) if float(value).is_integer() else round(value, 4)
+
+
+def _sell_table(sellables, products, buyback):
+    """{fullType: raw entry} and the condition-scaled types (see the module docstring)."""
+    raw, condition = {}, []
     for ft, (base, sell_cat) in sellables.items():
-        out[ft] = base * pct(SELL_OPTIONS.get(sell_cat, "General") + "SellValuePercent") / 100
+        raw[ft] = [base, sell_cat]
     for cat in buyback:
-        cat_pct = pct(PRICE_OPTIONS.get(cat, "") + "PricePercent") if cat in PRICE_OPTIONS else 100
-        sell_pct = pct(SELL_OPTIONS[cat] + "SellValuePercent") if cat in SELL_OPTIONS else 100
         for ft, price, bp in products.get(cat, []):
             if price <= 0 or (cat == "ammunition" and not any(w in ft for w in ("Box", "Carton", "Crate"))):
                 continue
-            vend = max(1, math.floor(price * global_pct / 100 * cat_pct / 100))
-            out[ft] = vend * 10 / 100 * ((bp / 10) if bp else 1) * sell_pct / 100
+            raw[ft] = [price, cat, cat, (bp / 10) if bp else 1]
             if cat == "weapons_firearms":
                 condition.append(ft)
             elif ft in condition:
                 condition.remove(ft)
-    return {k: (int(v) if float(v).is_integer() else round(v, 4)) for k, v in out.items()}, sorted(set(condition) & set(out))
+    raw = {k: [int(x) if isinstance(x, float) and x.is_integer() else x for x in v] for k, v in raw.items()}
+    return raw, sorted(set(condition) & set(raw))
 
 
 def read_economy(media_roots):
@@ -245,8 +269,10 @@ def read_economy(media_roots):
         sellables = {ft: tuple(v) for ft, v in sellables.items()}
         buyback = _strings(_block(sell_text, r"local buybackCategories\s*=")) or DEFAULT_BUYBACK
         products = _products(_read(os.path.join(shared, FILES["products"])))
-        atm, condition = _sell_table(sellables, products, buyback, sandbox)
-        result = {"atm": atm, "condition": condition, "variants": []}
+        defaults = {k: v for k, v in sandbox.items() if k in SANDBOX_OPTIONS}
+        raw, condition = _sell_table(sellables, products, buyback)
+        result = {"atm": {ft: atm_value(r, defaults) for ft, r in raw.items()}, "raw": raw, "condition": condition,
+                  "defaults": defaults, "variants": []}
 
         gom_text = _read(os.path.join(shared, FILES["gom"]))
         if gom_text:
@@ -258,12 +284,13 @@ def read_economy(media_roots):
                 merged = {c: [p for p in items if p[0] not in replaced] for c, items in products.items()}
                 for c, items in gom.items():
                     merged.setdefault(c, []).extend(items)
-                v_atm, v_cond = _sell_table(sellables, merged, buyback, sandbox)
+                v_raw, v_cond = _sell_table(sellables, merged, buyback)
                 for alias, canonical in (("MarzGuns.Bipod_Deployed", "MarzGuns.Bipod_Folded"),
                                          ("MarzGuns.Beretta_Stock_Deployed", "MarzGuns.Beretta_Stock_Folded")):
-                    if canonical in v_atm:
-                        v_atm[alias] = v_atm[canonical]
-                result["variants"].append({"requires": GOM_MODS, "atm": v_atm, "condition": v_cond})
+                    if canonical in v_raw:
+                        v_raw[alias] = v_raw[canonical]
+                result["variants"].append({"requires": GOM_MODS, "atm": {ft: atm_value(r, defaults) for ft, r in v_raw.items()},
+                                           "raw": v_raw, "condition": v_cond})
         return result
     return None
 

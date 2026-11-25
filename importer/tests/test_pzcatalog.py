@@ -206,6 +206,25 @@ class EconomyTests(unittest.TestCase):
             self.assertEqual(e["variants"], [])
             self.assertIsNone(read_economy([os.path.join(d, "nothing")]))
 
+    def test_the_server_settings_change_the_atm_price_like_the_mod(self):
+        from pzcatalog.economy import atm_value, read_economy
+        with tempfile.TemporaryDirectory() as d:
+            media = os.path.join(d, "media")
+            self.write_economy(media, gom=False)
+            e = read_economy([media])
+            self.assertEqual(e["defaults"], {"SellValuePercent": 25, "OneLifeCurrencySellValuePercent": 50})
+            self.assertEqual(e["raw"]["Base.Pistol"], [3000, "weapons_firearms", "weapons_firearms", 1])
+            self.assertEqual(e["raw"]["Base.HuntingRifle"], [5005, "weapons_firearms", "weapons_firearms", 0.5])
+            # OneLife's settings (from its console log): a silver bar (165, precious metals) sells for 115.
+            server = {"SellValuePercent": 200, "PreciousMetalsSellValuePercent": 35, "FirearmsPricePercent": 125,
+                      "FirearmsSellbackPercent": 2, "AmmunitionPricePercent": 225, "AmmunitionSellbackPercent": 1}
+            self.assertEqual(atm_value([165, "precious_metals"], server, with_sell_percent=True), 115.5)
+            # pistol: floor(3000 x 125%) = 3750, x 2% sellback = 75, x 200% = 150
+            self.assertEqual(atm_value(e["raw"]["Base.Pistol"], server, with_sell_percent=True), 150)
+            # 9mm box: floor(200 x 225%) = 450, x 1% = 4.5, x 200% = 9
+            self.assertEqual(atm_value(e["raw"]["Base.Bullets9mmBox"], server, with_sell_percent=True), 9)
+            self.assertEqual(atm_value(e["raw"]["OneLifeClothing.Coin"], {**e["defaults"], **server}, with_sell_percent=True), 40)
+
     def test_guns_of_marz_prices_are_a_variant_for_setups_with_it(self):
         from pzcatalog.economy import read_economy
         with tempfile.TemporaryDirectory() as d:

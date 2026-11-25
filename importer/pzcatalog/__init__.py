@@ -7,6 +7,7 @@ GAME_VERSION = (42, 22)
 FORMAT = 2
 # 3: ATM values include what Server Economy buys back from its gun shop (weapons, ammo boxes, magazines,
 # attachments) and the Guns of Marz prices. Only mods with an ATM are re-imported for it.
-ATM_FORMAT = 3
+# 4: also the raw numbers behind each ATM value, so the editor can use the server's own sandbox settings.
+ATM_FORMAT = 4
 TILE, COLS = 32, 64
 PER_SHEET = COLS * COLS

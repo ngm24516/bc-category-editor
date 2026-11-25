@@ -199,7 +199,7 @@ def write_version(conn, job, title, mod_ids, updated, layer, features=(), econom
     count: a new version is written."""
     fmt = ATM_FORMAT if economy or "atm" in features else FORMAT   # see _check_updates
     atm = economy["atm"] if economy else None
-    extra = {k: economy[k] for k in ("condition", "variants") if economy.get(k)} if economy else None
+    extra = {k: economy[k] for k in ("raw", "condition", "defaults", "variants") if economy.get(k)} if economy else None
     label = updated.strftime("%Y-%m-%d %H:%M UTC") if updated else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     with conn.cursor() as cur:
         cur.execute("""INSERT INTO mods (kind, workshop_id, name, created_by) VALUES ('workshop', %s, %s, %s)
