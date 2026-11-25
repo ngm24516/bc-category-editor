@@ -114,6 +114,20 @@ describe("mod search", () => {
     assert.deepEqual(r[0].features, ["stockroom"]);
   });
 
+  test("lookup: names and icons for given item types; the base game's name wins; icons found by icon name", async () => {
+    await addMod("3000000002", "Renames", [["Base.Axe", "Axe (renamed by a mod)", "Tool", "Tools", "weapon", 5, "Axe"],
+      ["Mod.Hatchet", "Hatchet", "Tool", "Tools", "weapon", -1, "Axe"]]);
+    const r = await (await api(null, "POST", "/api/catalog/lookup", { fullTypes: ["Base.Axe", "Mod.Hatchet", "Base.BritaGun", "Nope.Missing"] })).json();
+    assert.equal(r.items["Base.Axe"].name, "Firefighter Axe", "the base game's name, not the mod's");
+    assert.ok(r.items["Base.Axe"].icon, "has an icon");
+    assert.equal(r.items["Mod.Hatchet"].name, "Hatchet");
+    assert.deepEqual(r.items["Mod.Hatchet"].icon && r.iconSets[r.items["Mod.Hatchet"].icon[0]] ? "found" : "none", "found", "icon borrowed by icon name");
+    assert.equal(r.items["Nope.Missing"], undefined);
+    for (const icon of Object.values(r.items).map(x => x.icon).filter(Boolean)) assert.ok(r.iconSets[icon[0]].cols > 0);
+    assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: ["not an item"] })).status, 400);
+    assert.equal((await api(null, "POST", "/api/catalog/lookup", {})).status, 400);
+  });
+
   test("lookup by ids", async () => {
     const r = await (await api(null, "GET", `/api/catalog/mods?ids=${guns.modId},${brita.modId},junk`)).json();
     assert.equal(r.length, 2);

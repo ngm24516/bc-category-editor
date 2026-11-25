@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="app.css">
 <script src="account-menu.js"></script>
+<script src="stockroom-codec.js"></script>
 </head>
 <body>
 <header>
@@ -150,21 +151,6 @@
     <div id="stockPick2"></div>
     <div id="stockOut"></div>
     <div class="acts"><button id="stockClose">Close</button><button id="stockApply" class="primary" disabled>Reset to default</button></div>
-  </div>
-</div>
-
-<div class="modal" id="srModal">
-  <div class="box sr-box" role="dialog" aria-labelledby="srTitle">
-    <div class="sr-head">
-      <h2 id="srTitle">Stockroom</h2>
-      <select id="srWho" aria-label="Character" hidden></select>
-      <span class="muted" id="srWhen"></span>
-      <span class="spacer"></span>
-      <input type="file" id="srIn" accept=".txt" multiple hidden>
-      <button id="srImport" class="primary">Import Stockroom save…</button>
-      <button id="srClose">Close</button>
-    </div>
-    <div id="srBody"></div>
   </div>
 </div>
 
@@ -986,46 +972,9 @@ function renderStock(fileName, res) {
 $("btnStock").onclick = () => { $("stockModal").classList.add("on"); };
 $("stockClose").onclick = () => $("stockModal").classList.remove("on");
 $("stockPick").onclick = () => $("stockIn").click();
-// Stockroom's own codec (Storage.lua): s<len>:<text>  n<number>;  t  f  { key value ... }
-// <len> is the game's string length (Java characters, not bytes), so decode the file to text first.
-function decodeStockroom(bytes) {
-  let text = new TextDecoder("utf-8").decode(bytes);
-  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-  let pos = 0;
-  const fail = why => { throw new Error(why + " at character " + pos + " of " + text.length); };
-  function readUntil(ch) {
-    const end = text.indexOf(ch, pos);
-    if (end < 0 || end - pos >= 32) fail("bad length or number");
-    const v = Number(text.slice(pos, end)); if (!isFinite(v)) fail("bad number");
-    pos = end + 1; return v;
-  }
-  function parse(depth) {
-    if (depth > 24 || pos >= text.length) fail("data ends early");
-    const tag = text[pos++];
-    if (tag === "t") return true;
-    if (tag === "f") return false;
-    if (tag === "n") return readUntil(";");
-    if (tag === "s") { const n = readUntil(":"); const v = text.slice(pos, pos + n); pos += n; return v; }
-    if (tag !== "{") { pos--; fail("unexpected '" + tag + "'"); }
-    const out = {};
-    while (text[pos] !== "}") { if (pos >= text.length) fail("table not closed"); const k = parse(depth + 1); out[k] = parse(depth + 1); }
-    pos++; return out;
-  }
-  return parse(0);
-}
+// decodeStockroom(), stockItems() and stockLabel() live in stockroom-codec.js (shared with the Stockroom page).
 function hexToText(h) { try { return new TextDecoder().decode(new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)))); } catch (e) { return h; } }
 let stockStates = [];
-function stockItems(state, houseKeys) {
-  const found = new Map();
-  for (const [hk, house] of Object.entries(state.houses || {})) {
-    if (houseKeys && !houseKeys.has(hk)) continue;
-    const snap = house.snapshot; if (!snap || !snap.containers) continue;
-    for (const rec of Object.values(snap.containers)) {
-      for (const it of Object.values(rec.items || {})) if (it && typeof it.type === "string") found.set(it.type, (found.get(it.type) || 0) + (+it.count || 1));
-    }
-  }
-  return found;
-}
 function showStockState() {
   const st = stockStates[+($("stockWho") ? $("stockWho").value : 0)];
   if (!st) return;
@@ -1092,144 +1041,6 @@ $("stockApply").onclick = () => {
 // ------------------------------------------------------------ Stockroom inventory (signed in; avatar menu)
 // What each character has in their safehouse, from the Stockroom mod's save files (decoded here with
 // decodeStockroom; only the item totals go to the account, /api/stockroom), priced with the chosen marketplace.
-function stockLabel(state) {
-  const parts = String(state.identity || "").split("|");
-  return (parts[2] || "?") + " on " + (parts[0] === "singleplayer" ? "single player" : (parts[0] || "?").replace(/:+$/, "")) + (parts[1] ? " · world " + parts[1] : "");
-}
-const Stockroom = (() => {
-  let chars = [], cur = null, sort = { key: "value", dir: -1 }, q = "";
-  const FT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/;
-  const call = async (method, url, body) => {
-    const r = await fetch(url, { method, credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
-    const d = r.status === 204 ? null : await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error((d && d.message) || "Request failed (" + r.status + ")");
-    return d;
-  };
-
-  async function open() {
-    $("srModal").classList.add("on");
-    $("srBody").innerHTML = '<p class="muted">Loading your stockroom…</p>';
-    try { chars = (await call("GET", "/api/stockroom")).characters; } catch (e) { $("srBody").innerHTML = '<p class="notice warn show">' + esc(e.message) + "</p>"; return; }
-    if (!chars.some(c => c.id === cur)) cur = chars[0] ? chars[0].id : null;
-    render();
-  }
-
-  function empty() {
-    return '<div class="sr-empty"><h3>Your stockroom is empty</h3>' +
-      '<p>Import your Stockroom save to see what you have in your safehouse and what it\'s worth on the market.</p>' +
-      '<ol><li>In the game, open Stockroom in your safehouse and let it scan your storage.</li>' +
-      '<li>Press <b>Import Stockroom save…</b> and open <code class="mono">%USERPROFILE%\\Zomboid\\Lua\\Stockroom</code> ' +
-      '(<button type="button" class="linkish" data-copy="1">copy the path</button>).</li>' +
-      '<li>Select both files for your character (names ending in <span class="mono">-a.txt</span> and <span class="mono">-b.txt</span>); the newer one is used.</li></ol>' +
-      '<p class="muted">Only the item counts are saved to your account. Import again any time to update.</p></div>';
-  }
-
-  function render() {
-    const c = chars.find(x => x.id === cur);
-    $("srWho").hidden = chars.length < 2;
-    $("srWho").innerHTML = chars.map(x => '<option value="' + esc(x.id) + '">' + esc(x.label) + "</option>").join("");
-    if (c) $("srWho").value = c.id;
-    $("srWhen").textContent = c ? (chars.length < 2 ? c.label + " · " : "") + "imported " + new Date(c.importedAt).toLocaleString() : "";
-    if (!c) { $("srBody").innerHTML = empty(); return; }
-
-    const rows = Object.entries(c.items).map(([ft, n]) => {
-      const it = BYFT.get(ft), p = PRICES && PRICES.get(ft);
-      return { ft, n, it, name: it ? it.name : ft, p, value: p ? p[0] * n : null };
-    });
-    const priced = rows.filter(r => r.p);
-    const totalQty = rows.reduce((a, r) => a + r.n, 0), totalValue = priced.reduce((a, r) => a + r.value, 0);
-    const k = sort.key, dir = sort.dir;
-    const val = r => k === "name" ? r.name.toLowerCase() : k === "n" ? r.n : k === "value" ? r.value
-      : r.p ? r.p[{ avg: 0, low: 1, high: 2 }[k]] : null;
-    const needle = q.trim().toLowerCase();
-    const shown = rows.filter(r => !needle || r.name.toLowerCase().includes(needle) || r.ft.toLowerCase().includes(needle))
-      .sort((a, b) => {
-        const va = val(a), vb = val(b);
-        if (va == null || vb == null) return va == null ? (vb == null ? a.name.localeCompare(b.name) : 1) : -1;
-        return (typeof va === "string" ? va.localeCompare(vb) : va - vb) * dir;
-      });
-    const th = (key, label, cls) => '<th class="' + (cls || "") + '"><button class="sorter' + (k === key ? " on" : "") + '" data-srsort="' + key + '" data-dir="' +
-      (k === key ? (dir < 0 ? "desc" : "asc") : "") + '">' + label + "</button></th>";
-    const LIMIT = 1500;
-    let h = '<div class="sr-summary">' +
-      '<div class="card"><div class="k">Item types</div><div class="v">' + rows.length.toLocaleString() + "</div></div>" +
-      '<div class="card"><div class="k">Items</div><div class="v">' + totalQty.toLocaleString() + "</div></div>" +
-      '<div class="card"><div class="k">Market value (avg)</div><div class="v">' + (PRICES ? money(Math.round(totalValue)) : "–") + "</div></div>" +
-      '<div class="card"><div class="k">Priced</div><div class="v">' + (PRICES ? priced.length.toLocaleString() + " / " + rows.length.toLocaleString() : "–") + "</div></div></div>";
-    h += '<div class="sr-tools"><input type="search" id="srQ" placeholder="Search your stockroom" value="' + esc(q) + '">' +
-      '<span class="muted">' + (c.houses || []).map(x => esc(x.name) + " (" + x.containers + " containers)").join(" · ") + "</span>" +
-      '<span class="spacer"></span><button id="srForget" title="Remove this character\'s inventory from your account">Forget this character</button></div>';
-    if (!PRICES) h += '<p class="notice info show">Choose a marketplace under <b>Prices from</b> (left side of the editor) to see the average, lowest and highest market price of each item.</p>';
-    h += '<div class="sr-table"><table class="grid"><thead><tr><th></th>' + th("name", "Item") + th("n", "Qty", "num") + th("avg", "Avg", "num") + th("low", "Low", "num") +
-      th("high", "High", "num") + th("value", "Value", "num") + "</tr></thead><tbody>" +
-      shown.slice(0, LIMIT).map(r => "<tr><td>" + (r.it ? iconHtml(r.it.icon, 28) : '<span class="ic"></span>') + "</td>" +
-        '<td><span class="nm1">' + esc(r.name) + '</span><span class="sub mono">' + esc(r.ft) + (r.it ? "" : " · not in this setup's mods") + "</span></td>" +
-        '<td class="num">' + r.n.toLocaleString() + "</td>" +
-        (r.p ? '<td class="num" title="Average of ' + r.p[3] + ' listings">' + money(r.p[0]) + '</td><td class="num">' + money(r.p[1]) + '</td><td class="num">' + money(r.p[2]) + "</td>" +
-          '<td class="num"><b>' + money(Math.round(r.value)) + "</b></td>"
-          : '<td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td>') + "</tr>").join("") +
-      "</tbody></table></div>";
-    if (shown.length > LIMIT) h += '<p class="muted">Showing ' + LIMIT.toLocaleString() + " of " + shown.length.toLocaleString() + " item types. Search to narrow it down.</p>";
-    if (!shown.length) h += '<p class="muted">Nothing matches that search.</p>';
-    $("srBody").innerHTML = h;
-  }
-
-  async function importFiles(files) {
-    const byId = new Map(), errs = [];
-    for (const f of files) {
-      try {
-        const v = decodeStockroom(new Uint8Array(await f.arrayBuffer()));
-        if (!v || typeof v !== "object" || !v.houses) throw new Error("not a Stockroom save");
-        const id = String(v.identity || f.name), prev = byId.get(id);
-        if (!prev || (+v.sequence || 0) > (+prev.sequence || 0)) byId.set(id, v);
-      } catch (e) { errs.push(f.name + ": " + (e && e.message || e)); }
-    }
-    if (!byId.size) { toast("Those files aren't Stockroom saves" + (errs.length ? " (" + errs[0] + ")" : "") + "."); return; }
-    const characters = [...byId.values()].map(v => {
-      const houses = Object.entries(v.houses || {}).filter(([, hs]) => hs && hs.snapshot && hs.snapshot.containers)
-        .map(([name, hs]) => ({ name: String(name).slice(0, 120), containers: Object.keys(hs.snapshot.containers).length }));
-      const items = Object.fromEntries([...stockItems(v)].filter(([ft, n]) => FT.test(ft) && ft.length <= 200 && n >= 1)
-        .map(([ft, n]) => [ft, Math.min(1e9, Math.round(n))]));
-      return { identity: String(v.identity || stockLabel(v)).slice(0, 300), label: stockLabel(v).slice(0, 200),
-        sequence: Number.isSafeInteger(+v.sequence) ? +v.sequence : 0, houses, items };
-    });
-    const empties = characters.filter(x => !x.houses.length).length;
-    try {
-      const saved = (await call("PUT", "/api/stockroom", { characters })).characters;
-      cur = saved[0].id;
-      toast("Imported " + saved.map(x => x.label).join(", ") + (empties ? ". No safehouse snapshot yet for " + empties + ": open Stockroom in your safehouse and let it scan, then import again." : "."));
-    } catch (e) { toast(e.message); }
-    await open();
-  }
-
-  $("srImport").onclick = () => $("srIn").click();
-  $("srIn").addEventListener("change", e => { const f = [...e.target.files]; e.target.value = ""; if (f.length) importFiles(f); });
-  $("srClose").onclick = () => $("srModal").classList.remove("on");
-  $("srWho").onchange = () => { cur = $("srWho").value; render(); };
-  $("srBody").addEventListener("click", async e => {
-    const s = e.target.closest("[data-srsort]");
-    if (s) {
-      const key = s.dataset.srsort;
-      sort = sort.key === key ? { key, dir: -sort.dir } : { key, dir: key === "name" ? 1 : -1 };
-      return render();
-    }
-    if (e.target.closest("[data-copy]")) return copyText("%USERPROFILE%\\Zomboid\\Lua\\Stockroom", "Stockroom folder path");
-    if (e.target.closest("#srForget")) {
-      const c = chars.find(x => x.id === cur); if (!c) return;
-      const b = e.target.closest("#srForget");
-      if (!b.dataset.sure) { b.dataset.sure = "1"; b.textContent = "Remove " + c.label + "?"; b.classList.add("danger"); return; }
-      try { await call("DELETE", "/api/stockroom/" + encodeURIComponent(c.id)); cur = null; toast("Removed " + c.label + " from your stockroom."); } catch (err) { toast(err.message); }
-      await open();
-    }
-  });
-  $("srBody").addEventListener("input", e => {
-    if (e.target.id !== "srQ") return;
-    q = e.target.value; const pos = e.target.selectionStart;
-    render(); const n = $("srQ"); n.focus(); n.setSelectionRange(pos, pos);
-  });
-
-  return { open };
-})();
 
 // ------------------------------------------------------------ catalog: the base game plus this setup's mods
 let MODLIST = [];                 // catalog mod ids for this setup, in load order
@@ -1543,7 +1354,7 @@ const Account = (() => {
         { label: "Your setups…", onClick: () => $("setModal").classList.add("on") },
         { label: "Mods and imports…", onClick: () => $("btnMods").click() },
         { label: "Marketplace prices…", onClick: () => Market.focus() },
-        { label: "Stockroom", onClick: () => Stockroom.open(), show: () => hasFeature("stockroom") },
+        { label: "Stockroom", href: "/stockroom", show: () => hasFeature("stockroom") },
         { label: "Admin dashboard", href: "/admin", show: me.data.role === "admin" },
       ],
       onLogout: async () => {

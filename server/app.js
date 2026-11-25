@@ -65,6 +65,7 @@ export function createApp({ pool, config, fetchImpl }) {
   app.use("/api", (_req, res) => res.status(404).json({ error: "not_found" }));
 
   app.get("/admin", (_req, res) => { res.setHeader("Cache-Control", "no-cache"); res.sendFile(path.join(WEB_DIR, "admin.html")); });
+  app.get("/stockroom", (_req, res) => { res.setHeader("Cache-Control", "no-cache"); res.sendFile(path.join(WEB_DIR, "stockroom.html")); });
   app.use(express.static(WEB_DIR, {
     index: "index.html",
     setHeaders(res, file) {

@@ -39,8 +39,10 @@ Browser ──► Azure Container Apps (one container, one origin)
   picks a marketplace (`user_marketplaces`, RLS) and the item list gets **Avg / Low / High** columns, sortable,
   for items whose full type is exactly a library item. Prices are per item.
 - **Stockroom inventory** (`server/stockroom.js`, migration 007): when a mod with Stockroom is in the setup (found
-  by its files or its mod.info id `Stockroom`), the avatar menu has **Stockroom**. Users import their Stockroom save
-  (`%USERPROFILE%\Zomboid\Lua\Stockroom`); the editor decodes it and saves only each character's item totals to
+  by its files or its mod.info id `Stockroom`), the avatar menu links to **/stockroom** (`web/stockroom.html`, its own
+  page like `/admin`; names and icons via `POST /api/catalog/lookup`). Users import their Stockroom save
+  (`%USERPROFILE%\Zomboid\Lua\Stockroom`); the page decodes it (`web/stockroom-codec.js`, shared with the
+  editor's Stockroom books tool) and saves only each character's item totals to
   the account (`stockroom_characters`, RLS). The view lists every item with quantity, Avg / Low / High market price
   and value (quantity × average), sortable and searchable.
 - **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
