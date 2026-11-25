@@ -136,6 +136,17 @@ class MarketJobTests(unittest.TestCase):
         self.assertEqual(self.one("SELECT last_seen < %s, owner_name FROM market_listings WHERE listing_id = %s",
                                   crawl, sold["listing_id"]), (True, "Owner0"))
 
+    def test_an_unchanged_snapshot_is_still_read_once_if_never_fully_read(self):
+        import market
+        with psycopg.connect(DB) as c:   # as if read before owners and last_crawl_at were recorded
+            c.execute("UPDATE marketplaces SET last_snapshot_at = to_timestamp(%s) WHERE name = 'OneLife'", (MARKET["snapshot"],))
+        market.cmd_market()
+        self.assertEqual(len(MARKET["requests"]), 3, "read in full although the snapshot is the same")
+        self.assertIsNotNone(self.one("SELECT last_crawl_at FROM marketplaces WHERE name = 'OneLife'")[0])
+        MARKET["requests"].clear()
+        market.cmd_market()
+        self.assertEqual(len(MARKET["requests"]), 1, "after that, unchanged snapshots are skipped again")
+
     def test_a_failing_marketplace_is_recorded_not_fatal(self):
         import market
         MARKET["status"] = 503
