@@ -21,11 +21,9 @@ jobs:
               [ -d /tmp/s/steamapps/workshop/content/108600/3728629828 ] && break; sleep 5; done'
           docker cp dl:/tmp/s/steamapps/workshop/content/108600/3728629828 out/mod
           cd "out/mod/mods/Server Economy/42/media/lua/shared"
-          echo "=== Sellables 440-end ==="; sed -n '440,$p' HZEconomySellables.lua
-          echo "=== Shared: loading/merging sellables ==="; grep -nE 'Sellables|loadTableModule|buyback|Combat|combat' HZEconomyShared.lua | head -80
-          echo "=== Products: head ==="; head -60 HZEconomyProducts.lua
-          echo "=== Products: lines with buyback/sell/combat ==="; grep -nE 'buyback|Buyback|sell|Sell|combat|Combat|conditionScaled' HZEconomyProducts.lua | head -60
-          echo "=== Products: tail 80 ==="; tail -80 HZEconomyProducts.lua
-          echo "=== GoM products 1-40 and 200-300 ==="; sed -n '1,40p;200,300p' HZEconomyGunsOfMarzProducts.lua
-          echo "=== Who writes into Sellables (all lua) ==="; grep -rnE 'Sellables\[[^]]+\]\s*=|Sellables\s*=\s*' ../.. --include=*.lua | grep -v "HZEconomySellables.lua:[0-9]*:    \[" | head -40
-          echo "=== sandbox: buyback / category percents ==="; grep -nA7 -iE 'option ServerEconomy\.[A-Za-z]*(Buyback|SellCategory|Weapon|Combat|Category[A-Za-z]*Percent)' ../../../sandbox-options.txt | head -150
+          echo "=== GOM FULL ==="; cat HZEconomyGunsOfMarzProducts.lua
+          echo "=== getVendingPrice ==="; grep -nA30 'function HZEconomyShared.getVendingPrice' HZEconomyShared.lua
+          echo "=== Products: categories and lines with extra fields ==="; grep -nE '^\s{4}[a-z_]+ = \{' HZEconomyProducts.lua; grep -nE 'buybackPercent|minCondition|sellOnly' HZEconomyProducts.lua | head -20
+          echo "=== Products: firearms/ammo/magazines/attachments counts ==="; awk '/^    [a-z_]+ = \{/{c=$1} /itemType/{n[c]++} END{for(k in n) print k, n[k]}' HZEconomyProducts.lua
+          echo "=== Products: end of file require/apply ==="; grep -nE 'require|apply|return' HZEconomyProducts.lua | tail -10
+          echo "=== sandbox: price/sell options ==="; grep -nA8 -E 'option ServerEconomy\.[A-Za-z]*(Percent|Sellback|Buyback)' ../../sandbox-options.txt | grep -E 'option|default' | head -120
