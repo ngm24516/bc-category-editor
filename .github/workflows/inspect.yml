@@ -1,0 +1,21 @@
+name: inspect
+on: { push: { branches: [debug/inspect-money] } }
+permissions: { contents: read }
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f Dockerfile.importer -t importer:ci .
+      - run: |
+          mkdir -p out
+          opts=""; [ "$(docker version --format '{{.Server.Version}}')" = "29.4.2" ] && opts="--security-opt seccomp=unconfined"
+          docker run --name dl $opts --entrypoint bash importer:ci -c '
+            for i in 1 2 3; do /opt/steamcmd/steamcmd.sh +force_install_dir /tmp/s +login anonymous +workshop_download_item 108600 3728629828 validate +quit | tail -1
+              [ -d /tmp/s/steamapps/workshop/content/108600/3728629828 ] && break; sleep 5; done'
+          docker cp dl:/tmp/s/steamapps/workshop/content/108600/3728629828 out/mod
+          cd "out/mod/mods/Server Economy/42/media"
+          echo "=== money mentions ==="; grep -rnI -i -E 'money|cash|banknote|bill(s)?\b|currency' --include=*.lua --include=*.txt . | grep -v -i 'blackmarket\|contraband' | head -250
+          echo "=== deposit functions ==="; grep -rnI -E 'function [A-Za-z_.:]*([Dd]eposit|[Ww]ithdraw)' . | head -40
+          echo "=== sandbox money options ==="; grep -nA8 -i -E 'option ServerEconomy\.[A-Za-z]*(Money|Cash|Deposit|Withdraw|Currency)' sandbox-options.txt | grep -E 'option|default' | head -40
+          echo "=== translations ==="; grep -rnI -i -E 'money|deposit|withdraw' lua/shared/Translate/EN 2>/dev/null | head -60; grep -rnI -i -E '"[^"]*(money|deposit|withdraw)[^"]*"' lua/shared/translate 2>/dev/null | head -60
