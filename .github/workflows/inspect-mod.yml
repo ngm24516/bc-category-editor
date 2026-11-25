@@ -1,0 +1,31 @@
+# Temporary: downloads Server Economy and prints how weapons become ATM-sellable. Only reads files. Delete after.
+name: Inspect a Workshop mod (temporary)
+on:
+  push:
+    branches: [debug/inspect-server-economy]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f Dockerfile.importer -t importer:ci .
+      - name: Download and print
+        run: |
+          mkdir -p out
+          opts=""; [ "$(docker version --format '{{.Server.Version}}')" = "29.4.2" ] && opts="--security-opt seccomp=unconfined"
+          docker run --name dl $opts --entrypoint bash importer:ci -c '
+            for i in 1 2 3; do /opt/steamcmd/steamcmd.sh +force_install_dir /tmp/s +login anonymous +workshop_download_item 108600 3728629828 validate +quit | tail -1
+              [ -d /tmp/s/steamapps/workshop/content/108600/3728629828 ] && break; sleep 5; done'
+          docker cp dl:/tmp/s/steamapps/workshop/content/108600/3728629828 out/mod
+          cd "out/mod/mods/Server Economy/42/media/lua/shared"
+          echo "=== Sellables 440-end ==="; sed -n '440,$p' HZEconomySellables.lua
+          echo "=== Shared: loading/merging sellables ==="; grep -nE 'Sellables|loadTableModule|buyback|Combat|combat' HZEconomyShared.lua | head -80
+          echo "=== Products: head ==="; head -60 HZEconomyProducts.lua
+          echo "=== Products: lines with buyback/sell/combat ==="; grep -nE 'buyback|Buyback|sell|Sell|combat|Combat|conditionScaled' HZEconomyProducts.lua | head -60
+          echo "=== Products: tail 80 ==="; tail -80 HZEconomyProducts.lua
+          echo "=== GoM products 1-40 and 200-300 ==="; sed -n '1,40p;200,300p' HZEconomyGunsOfMarzProducts.lua
+          echo "=== Who writes into Sellables (all lua) ==="; grep -rnE 'Sellables\[[^]]+\]\s*=|Sellables\s*=\s*' ../.. --include=*.lua | grep -v "HZEconomySellables.lua:[0-9]*:    \[" | head -40
+          echo "=== sandbox: buyback / category percents ==="; grep -nA7 -iE 'option ServerEconomy\.[A-Za-z]*(Buyback|SellCategory|Weapon|Combat|Category[A-Za-z]*Percent)' ../../../sandbox-options.txt | head -150
