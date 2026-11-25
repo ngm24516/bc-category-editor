@@ -92,7 +92,7 @@
       <span class="spacer"></span>
       <span class="muted" id="shownInfo"></span>
     </div>
-    <div class="thead"><span></span><span></span><span>Item</span><span class="col-mod">Mod</span><span class="col-def">Default</span><button class="col-price sorter" data-sort="avg" title="Average price of every listing seen. Click to sort">Avg</button><button class="col-price col-lh sorter" data-sort="low" title="Lowest listing price seen. Click to sort">Low</button><button class="col-price col-lh sorter" data-sort="high" title="Highest listing price seen. Click to sort">High</button><span>Category</span><span></span></div>
+    <div class="thead"><span></span><span></span><div class="th" data-col="item">Item<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price" data-col="avg"><button class="sorter" data-sort="avg" title="Average price of every listing seen. Click to sort">Avg</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="low"><button class="sorter" data-sort="low" title="Lowest listing price seen. Click to sort">Low</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="high"><button class="sorter" data-sort="high" title="Highest listing price seen. Click to sort">High</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-mod" data-col="mod">Mod<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-def" data-col="def">Default<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><span>Category</span><span></span></div>
     <div class="scroller" id="scroller" tabindex="0" aria-label="Items. Click to select, drag, Ctrl+click, Shift+click, Ctrl+A"><div class="rows" id="rows"></div></div>
   </section>
 
@@ -444,6 +444,44 @@ document.querySelectorAll(".sorter").forEach(b => b.addEventListener("click", ()
   renderSorters(); applyFilters();
 }));
 
+// ------------------------------------------------------------ resizable columns
+// Each header with a handle sets a CSS variable (--w-item, --w-avg, ...) on <html> that the list's grid uses,
+// so the header and every row stay lined up. Widths are kept in this browser; double-click a handle to reset.
+const Cols = (() => {
+  const KEY = "bcedit.cols.v1", MIN = 56, MAX = 900;
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
+  const apply = () => {
+    for (const col of ["item", "avg", "low", "high", "mod", "def"]) {
+      if (saved[col]) document.documentElement.style.setProperty("--w-" + col, saved[col] + "px");
+      else document.documentElement.style.removeProperty("--w-" + col);
+    }
+  };
+  const store = () => { try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* storage unavailable */ } };
+  document.querySelectorAll(".thead .rsz").forEach(h => {
+    const col = h.parentElement.dataset.col;
+    h.addEventListener("click", e => e.stopPropagation());
+    h.addEventListener("dblclick", e => { e.stopPropagation(); delete saved[col]; apply(); store(); });
+    h.addEventListener("pointerdown", e => {
+      e.preventDefault(); e.stopPropagation();
+      const startX = e.clientX, startW = h.parentElement.getBoundingClientRect().width;
+      h.setPointerCapture(e.pointerId);
+      document.body.classList.add("resizing");
+      const move = ev => {
+        saved[col] = Math.round(Math.min(MAX, Math.max(MIN, startW + ev.clientX - startX)));
+        apply();
+      };
+      const up = () => {
+        h.removeEventListener("pointermove", move); h.removeEventListener("pointerup", up); h.removeEventListener("pointercancel", up);
+        document.body.classList.remove("resizing"); store();
+      };
+      h.addEventListener("pointermove", move); h.addEventListener("pointerup", up); h.addEventListener("pointercancel", up);
+    });
+  });
+  apply();
+  return { reset: () => { saved = {}; apply(); store(); } };
+})();
+
 function renderRows(force) {
   const sc = $("scroller");
   const first = Math.max(0, Math.floor(sc.scrollTop / ROWH) - 8);
@@ -462,9 +500,9 @@ function renderRows(force) {
     h += '<div class="row' + (sel ? " sel" : "") + (it.ft === focusFt ? " focus" : "") + '" style="top:' + (i * ROWH) + 'px" data-i="' + i + '">' +
       '<input type="checkbox" aria-label="Select ' + esc(it.name) + '"' + (sel ? " checked" : "") + '>' + iconHtml(it.icon, 32) +
       '<div class="nm"><div title="' + esc(it.name) + '">' + esc(it.name) + (it.unknown ? ' <span class="chip warn">not on this PC</span>' : "") + '</div><div class="ft">' + esc(it.ft) + '</div></div>' +
+      priceCells(it.ft) +
       '<div class="cell col-mod muted" title="' + esc(modLabel(it)) + '">' + esc(modLabel(it)) + '</div>' +
       '<div class="cell col-def" title="' + esc(defaultOf(it)) + '">' + esc(catName(defaultOf(it))) + '</div>' +
-      priceCells(it.ft) +
       '<button class="catbtn' + (ov ? " custom" : "") + (blk ? " blk" : "") + '" title="' + esc(tip) + '">' + esc(catName(cur)) + '</button>' +
       (ov ? '<button class="rst" title="Remove your override">Reset</button>' : "<span></span>") +
       "</div>";
