@@ -15,10 +15,12 @@ jobs:
               [ -d /tmp/s/steamapps/workshop/content/108600/3728629828 ] && break; sleep 5; done'
           docker cp dl:/tmp/s/steamapps/workshop/content/108600/3728629828 out/mod
           cd "out/mod/mods/Server Economy/42/media"
-          echo "=== files ==="; find . -type f | sort | xargs -d '\n' wc -c | sort -k2 | head -150
-          echo "=== blackmarket shared/server/client files (full) ==="
-          for f in $(find . -type f -iname '*blackmarket*' | sort); do echo "##### $f"; cat "$f"; done
-          echo "=== HZEconomyShared price functions ==="; grep -nE 'function HZEconomyShared\.' lua/shared/HZEconomyShared.lua
-          for fn in getVendingPrice getBuyPrice getProductPrice getStockPrice getDynamicPrice getPrice getSellPrice; do grep -nA40 "function HZEconomyShared.$fn\b" lua/shared/HZEconomyShared.lua; done
-          echo "=== buy price in server ==="; grep -rnE 'getVendingPrice|getBuyPrice|getProductPrice|priceFor|stockPrice|demand' lua/server lua/shared | grep -v -i blackmarket | head -80
-          echo "=== sandbox: all ServerEconomy options with defaults ==="; awk '/^option ServerEconomy\./{o=$2} /default *=/{if(o){print o, $0; o=""}}' sandbox-options.txt
+          set +e
+          echo "=== contraband shared: price/value/blackmarket lines ==="; grep -nE -i 'price|value|payout|blackmarket|buyback|itemType|fullType' lua/shared/HZContrabandShared.lua | head -400
+          echo "=== contraband server: blackMarketView / sell ==="; grep -nE -i 'function [A-Za-z_.:]*(blackMarket|sell|price|payout)' lua/server/HZContrabandServer.lua
+          n=$(grep -n 'blackMarketView' lua/server/HZContrabandServer.lua | head -1 | cut -d: -f1); [ -n "$n" ] && sed -n "$n,$((n+120))p" lua/server/HZContrabandServer.lua
+          echo "=== getVendingPrice and buy ==="; grep -nA25 'function HZEconomyShared.getVendingPrice' lua/shared/HZEconomyShared.lua
+          grep -nE 'getVendingPrice|Stock|stock' lua/server/HZEconomyServer.lua | head -60
+          echo "=== Java bridge price functions ==="; grep -rnE 'ServerEconomyJava\.[A-Za-z]*([Pp]rice|[Vv]alue)|bridge\.[A-Za-z]*([Pp]rice|[Vv]alue)' lua | head -40
+          echo "=== sandbox EN text: price/stock/blackmarket ==="; grep -nE -i 'price|stock|black ?market|buyback|payout' lua/shared/Translate/EN/Sandbox_EN.txt | head -150
+          echo "=== sandbox: black market + contraband options ==="; grep -nA8 -E 'option ServerEconomy(BlackMarket|Contraband)[A-Za-z]*\.' sandbox-options.txt | grep -E 'option|default' | head -120
