@@ -6,7 +6,7 @@
 //   GET    /api/markets/:id/prices        { items: { fullType: [avg, low, high, listings, nowLow, owner, shop] } }
 //   GET    /api/admin/markets             every marketplace with its address, status and counts (admins)
 //   POST   /api/admin/markets             { name, url } checks the address answers like a marketplace, then adds it
-//   PATCH  /api/admin/markets/:id         { enabled, ignoreAt, outlierFactor }
+//   PATCH  /api/admin/markets/:id         { enabled, ignoreAt, outlierFactor, economySettings }
 //   DELETE /api/admin/markets/:id         removes it and its whole price history
 //
 // Prices are per item; each listing counts once per price it was seen at (market_listings).
@@ -20,6 +20,19 @@ const OVERPRICED = `(
   (mk.ignore_at IS NOT NULL AND l.price >= mk.ignore_at)
   OR (coalesce(mk.outlier_factor, 0) > 0 AND s.cnt >= 3 AND l.price >= 100 AND l.price > mk.outlier_factor * s.med))`;
 
+// Economy settings: what web/atm.js isSetting accepts (names like SellValuePercent, BandMinCrystalMeth).
+const SETTING = /^(?:[A-Za-z]+Percent|Price[A-Za-z0-9]+|Band(?:Min|Max)[A-Za-z0-9]+|Enable[A-Za-z]+|[A-Za-z]+DemandWeight|PricingPreset|MigrateLegacyMethBand)$/;
+export function cleanEconomySettings(v) {
+  if (v === null) return null;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const entries = Object.entries(v);
+  if (entries.length > 1000) return undefined;
+  for (const [k, x] of entries) {
+    if (k.length > 80 || !SETTING.test(k) || typeof x !== "number" || !Number.isFinite(x) || x < 0 || x > 1e7) return undefined;
+  }
+  return entries.length ? Object.fromEntries(entries) : null;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FULL_TYPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/;
 
@@ -28,6 +41,8 @@ const marketJson = (r, admin) => ({
   lastCheckedAt: r.last_checked_at, lastSnapshotAt: r.last_snapshot_at, lastListings: r.last_listings,
   ignoreAt: r.ignore_at == null ? null : Number(r.ignore_at), outlierFactor: r.outlier_factor == null ? null : Number(r.outlier_factor),
   items: Number(r.items || 0),
+  // The game server's Server Economy sandbox settings (see 013_market_economy_settings.sql), or null.
+  economySettings: r.economy_settings || null,
   ...(admin ? {
     url: r.api_url, lastError: r.last_error, createdAt: r.created_at, addedBy: r.added_by || null,
     history: Number(r.history || 0),
@@ -111,7 +126,7 @@ export function createMarketRouter({ pool, requireUser, config }) {
          SELECT full_type, percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS med, count(*) AS cnt
            FROM market_listings WHERE marketplace_id = $1 GROUP BY full_type),
        lst AS (
-         SELECT l.full_type, l.price, l.owner_name, l.shop_name, l.last_seen, ${OVERPRICED} AS ignored
+         SELECT l.full_type, l.price, l.quantity, l.owner_name, l.shop_name, l.last_seen, ${OVERPRICED} AS ignored
            FROM market_listings l JOIN stats s USING (full_type) JOIN marketplaces mk ON mk.id = l.marketplace_id
           WHERE l.marketplace_id = $1 AND EXISTS (SELECT 1 FROM catalog_items c WHERE c.full_type = l.full_type)),
        hist AS (
@@ -120,19 +135,23 @@ export function createMarketRouter({ pool, requireUser, config }) {
                 count(*) FILTER (WHERE NOT ignored) AS n, count(*) FILTER (WHERE ignored) AS skipped
            FROM lst GROUP BY full_type HAVING count(*) FILTER (WHERE NOT ignored) > 0),
        cur AS (
-         SELECT DISTINCT ON (full_type) full_type, price, owner_name, shop_name
+         -- qty: how many are listed now at that price, in every listing at it (null when no listing says)
+         SELECT DISTINCT ON (full_type) full_type, price, owner_name, shop_name,
+                sum(quantity) OVER (PARTITION BY full_type, price) AS qty
            FROM lst
           -- compared in SQL: the timestamps have microseconds, which a JavaScript Date would round away
           WHERE NOT ignored AND last_seen = (SELECT last_crawl_at FROM marketplaces WHERE id = $1)
           ORDER BY full_type, price, owner_name NULLS LAST)
-       SELECT h.*, c.price AS cur_price, c.owner_name, c.shop_name FROM hist h LEFT JOIN cur c USING (full_type)`,
+       SELECT h.*, c.price AS cur_price, c.owner_name, c.shop_name, c.qty AS cur_qty FROM hist h LEFT JOIN cur c USING (full_type)`,
       [m.id]);
     res.set("Cache-Control", "public, max-age=300");
     res.json({
       marketplaceId: m.id, snapshotAt: m.last_snapshot_at,
-      // [average, low, high, listings counted, current lowest (null if none now), its owner, its shop, overpriced ignored]
+      // [average, low, high, listings counted, current lowest (null if none now), its owner, its shop, overpriced ignored,
+      //  how many are listed now at the current lowest (null if unknown)]
       items: Object.fromEntries(rows.map(r => [r.full_type, [Number(r.avg), Number(r.low), Number(r.high), Number(r.n),
-        r.cur_price == null ? null : Number(r.cur_price), r.owner_name ?? null, r.shop_name ?? null, Number(r.skipped)]])),
+        r.cur_price == null ? null : Number(r.cur_price), r.owner_name ?? null, r.shop_name ?? null, Number(r.skipped),
+        r.cur_qty == null ? null : Number(r.cur_qty)]])),
     });
   });
 
@@ -188,7 +207,14 @@ export function createMarketRouter({ pool, requireUser, config }) {
       }
       vals.push(b.outlierFactor); sets.push(`outlier_factor = $${vals.length}`);
     }
-    if (!sets.length) return bad(res, 400, "invalid", "Send enabled, ignoreAt or outlierFactor");
+    if ("economySettings" in b) {
+      const v = cleanEconomySettings(b.economySettings);
+      if (v === undefined) {
+        return bad(res, 400, "invalid", "economySettings must be { SettingName: number, ... } with Server Economy setting names, or null");
+      }
+      vals.push(v === null ? null : JSON.stringify(v)); sets.push(`economy_settings = $${vals.length}::jsonb`);
+    }
+    if (!sets.length) return bad(res, 400, "invalid", "Send enabled, ignoreAt, outlierFactor or economySettings");
     const { rows } = await pool.query(`UPDATE marketplaces SET ${sets.join(", ")} WHERE id = $1 RETURNING *`, vals);
     if (!rows.length) return bad(res, 404, "not_found", "No such marketplace");
     res.json(marketJson(rows[0], true));

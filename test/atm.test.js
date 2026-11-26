@@ -6,7 +6,7 @@ import vm from "node:vm";
 
 const ctx = { window: {} };
 vm.runInNewContext(readFileSync(new URL("../web/atm.js", import.meta.url), "utf8"), ctx);
-const { parse, payout, value, sellPercent } = ctx.window.ATMCalc;
+const { parse, payout, value, sellPercent, storePrice, blackMarket } = ctx.window.ATMCalc;
 
 // OneLife's server, as its console log prints the sandbox settings.
 const LOG = `LOG  : General      f:0 st:0> FirearmsPricePercent 125
@@ -36,4 +36,33 @@ test("pays like the mod: a silver bar sells for 115 on OneLife", () => {
   assert.equal(value([3000, "weapons_firearms", "weapons_firearms", 1], {}, def), 300, "before the sell %: 10% buyback");
   assert.equal(payout([300, ""], { SellValuePercent: 50 }, {}), 150, "a value from before format 4: only the sell %");
   assert.equal(sellPercent({}, {}), 25);
+});
+
+test("reads contraband settings too: bands, prices, family switches (true/false as 1/0)", () => {
+  const s = parse(`LOG  : General      f:0 st:0> EnableMeth true
+LOG  : General      f:0 st:0> MigrateLegacyMethBand false
+LOG  : General      f:0 st:0> BandMinCrystalMeth 350
+LOG  : General      f:0 st:0> PriceMeth 300
+LOG  : General      f:0 st:0> HubX 10615`);
+  assert.deepEqual({ ...s }, { EnableMeth: 1, MigrateLegacyMethBand: 0, BandMinCrystalMeth: 350, PriceMeth: 300 });
+});
+
+test("the server store's price: base × GlobalPricePercent × category percent, rounded down", () => {
+  const s = parse(LOG);
+  assert.equal(storePrice([3000, "weapons_firearms"], s, {}), 3750, "FirearmsPricePercent 125");
+  assert.equal(storePrice([10, "food_drink"], { FoodDrinkPricePercent: 250 }, {}), 25);
+  assert.equal(storePrice([10, "something_new"], {}, {}), 10, "unknown category: 100%");
+  assert.equal(storePrice([100, "tools"], { GlobalPricePercent: 1 }, {}), 10, "the mod keeps percents at 10 or more");
+});
+
+test("the Black Market's estimate: middle of the band × payout percents, more at DMZ sites", () => {
+  const def = { BandMinCrystalMeth: 350, BandMaxCrystalMeth: 650, BandMinLSD: 160, BandMaxLSD: 350, PriceLSD: 100 };
+  assert.deepEqual({ ...blackMarket(["Meth", "PriceMeth", "CrystalMeth"], {}, def) }, { each: 275, dmz: 550, dmzPct: 200, banded: true },
+    "the old meth band moves to 200-350; meth DMZ 200%");
+  assert.equal(blackMarket(["Meth", "PriceMeth", "CrystalMeth"], { MigrateLegacyMethBand: 0 }, def).each, 500);
+  assert.deepEqual({ ...blackMarket(["Psychedelics", "PriceLSD", "LSD"], { DMZPayoutPercent: 200, PayoutPercent: 150 }, def) },
+    { each: 382, dmz: 764, dmzPct: 200, banded: true }, "floor(255 × 150%)");
+  assert.equal(blackMarket(["Psychedelics", "PriceLSD", "LSD"], { PricingPreset: 2 }, def).each, 100, "custom preset: its price");
+  assert.equal(blackMarket(["Psychedelics", "PriceLSD", "LSD"], { EnablePsychedelics: 0 }, def), null, "family switched off");
+  assert.equal(blackMarket(["Psychedelics", "PriceLSD", "LSD"], { EnableBlackMarketSales: 0 }, def), null);
 });

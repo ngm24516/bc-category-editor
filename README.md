@@ -70,6 +70,16 @@ Browser ──► Azure Container Apps (one container, one origin)
   (`web/atm.js`, matching `atm_value` in `importer/pzcatalog/economy.py`). For that, versions since format 4 keep
   the numbers behind each value and the mod's defaults in `atm_extra` (`raw`, `defaults`); prices are rounded down
   like the ATM shows them.
+- **Item hover card** (`web/item-card.js`, editor and Stockroom): rest the pointer on an item to see its weight, what
+  the ATM pays, what the server store sells it for (`floor(basePrice × GlobalPricePercent × <Category>PricePercent)`,
+  which the store then moves with its stock by up to `MaxFluctuationPercent`), what the Black Market trader pays
+  for Narcotics & Crime products (an estimate: the mod's Java code quotes from the middle of each item's band ×
+  `PayoutPercent` × the family's percent, more at DMZ sites), and the marketplace's prices. Format 5 stores the
+  store prices (`atm_extra.shop`) and the Black Market's products (`atm_extra.blackMarket`).
+- **Server settings per marketplace** (migration 013): one marketplace is one game server, so an admin pastes that
+  server's Server Economy sandbox settings once (Admin › Marketplaces › Server settings) and everyone who picks it
+  gets its prices. Settings a user pastes in the editor win over them.
+- **Now** shows how many are listed at the cheapest price, in parentheses.
 - **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
   `ADMIN_DISCORD_IDS`. Shows the queue, when the importer and the hourly update check run next and last, every
   finished import with its worker log, and each importer run (`importer_runs`). Every mod whose latest import

@@ -49,7 +49,7 @@ export function atmFor(atm, extra, modIds) {
   const have = new Set([...modIds].map(x => String(x).toLowerCase()));
   const v = (extra?.variants || []).find(x => x.requires.every(id => have.has(id.toLowerCase())));
   const t = v || extra || {};
-  return { atm: v ? v.atm : atm || {}, raw: t.raw || {}, condition: t.condition || [] };
+  return { atm: v ? v.atm : atm || {}, raw: t.raw || {}, condition: t.condition || [], shop: t.shop || {} };
 }
 
 export function createCatalogRouter({ pool }) {
@@ -143,10 +143,12 @@ export function createCatalogRouter({ pool }) {
       `SELECT atm, atm_extra FROM (SELECT DISTINCT ON (mod_id) atm, atm_extra, created_at FROM mod_versions
                                     ORDER BY mod_id, created_at DESC) v
         WHERE atm IS NOT NULL ORDER BY created_at`)).rows;
-    const want = new Set(list), atm = {}, atmRaw = {}, atmDefaults = {}, condition = new Set();
+    const want = new Set(list), atm = {}, atmRaw = {}, atmDefaults = {}, condition = new Set(), shop = {}, blackMarket = {};
     for (const e of economies) {
       const t = atmFor(e.atm, e.atm_extra, modIds);
       Object.assign(atmDefaults, e.atm_extra?.defaults || {});
+      for (const [ft, x] of Object.entries(t.shop)) if (want.has(ft)) shop[ft] = x;
+      for (const [ft, x] of Object.entries(e.atm_extra?.blackMarket || {})) if (want.has(ft)) blackMarket[ft] = x;
       for (const [ft, v] of Object.entries(t.atm)) {
         if (!want.has(ft)) continue;
         atm[ft] = Number(v); condition.delete(ft);
@@ -161,6 +163,7 @@ export function createCatalogRouter({ pool }) {
       items: Object.fromEntries(rows.map(r => [r.full_type, { name: r.name, icon: r.icon_version ? [r.icon_version, r.icon_tile] : null }])),
       atm,                                   // at the mod's default settings, before the sell %
       atmRaw, atmDefaults,                   // to redo that with the server's settings (web/atm.js)
+      shop, blackMarket,                     // the server store's prices and what the Black Market buys (hover card)
       atmCondition: [...condition].sort(),   // firearms: the ATM pays this at full condition, less when worn
     });
   }));

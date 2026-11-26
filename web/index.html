@@ -12,6 +12,7 @@
 <script src="account-menu.js"></script>
 <script src="stockroom-codec.js"></script>
 <script src="atm.js"></script>
+<script src="item-card.js"></script>
 </head>
 <body>
 <header>
@@ -163,8 +164,9 @@
 
 <div class="modal" id="atmModal">
   <div class="box">
-    <h2>Your server's ATM settings</h2>
-    <p>The ATM's prices depend on your server's Server Economy sandbox settings (sell %, category percents, gun buyback percents). Paste them here: the server console's sandbox list, <span class="mono">SandboxVars.lua</span> or <span class="mono">servertest_SandboxVars.lua</span> all work. Only the ATM settings are kept, in this browser.</p>
+    <h2>Your server's Server Economy settings</h2>
+    <p>The ATM, server store and Black Market prices depend on your server's Server Economy sandbox settings (sell %, category percents, gun buyback percents, contraband bands). Paste them here: the server console's sandbox list, <span class="mono">SandboxVars.lua</span> or <span class="mono">servertest_SandboxVars.lua</span> all work. Only those settings are kept, in this browser.</p>
+    <p class="muted" id="atmMkt"></p>
     <textarea id="atmText" class="mono" rows="10" spellcheck="false" placeholder="SellValuePercent 200&#10;PreciousMetalsSellValuePercent 35&#10;FirearmsSellbackPercent 2&#10;…"></textarea>
     <div class="muted" id="atmFound"></div>
     <div class="acts"><button id="atmReset">Use the mod's defaults</button><button id="atmCancel">Cancel</button><button id="atmApply" class="primary">Use these</button></div>
@@ -445,17 +447,22 @@ function priceCells(ft) {
   const n = p[3] + (p[3] === 1 ? " listing" : " listings") + (p[7] ? " (" + p[7] + " overpriced ignored)" : "");
   // p[4..6]: the cheapest listing right now (last market read), its owner and shop; null when none is listed now.
   const now = p[4] == null ? '<div class="cell col-price col-lh col-now muted" title="Not listed right now">–</div>'
-    : '<div class="cell col-price col-lh col-now" title="Cheapest now: ' + esc(money(p[4])) + (p[5] ? " from " + esc(p[5]) : "") + (p[6] ? " at " + esc(p[6]) : "") + '">' +
-      money(p[4]) + (p[5] ? '<small>' + esc(p[5]) + '</small>' : "") + '</div>';
+    : '<div class="cell col-price col-lh col-now" title="Cheapest now: ' + esc(money(p[4])) + (p[5] ? " from " + esc(p[5]) : "") + (p[6] ? " at " + esc(p[6]) : "")
+      + (p[8] != null ? ", " + p[8].toLocaleString() + " listed at that price" : "") + '">' +
+      money(p[4]) + (p[8] != null ? ' <span class="qty">(' + p[8].toLocaleString() + ')</span>' : "") + (p[5] ? '<small>' + esc(p[5]) + '</small>' : "") + '</div>';
   return '<div class="cell col-price" title="Average of ' + n + '">' + money(p[0]) + '</div>' +
     '<div class="cell col-price col-lh" title="Lowest of ' + n + '">' + money(p[1]) + '</div>' +
     '<div class="cell col-price col-lh" title="Highest of ' + n + '">' + money(p[2]) + '</div>' + now;
 }
 // Weight (always) and Server Economy's ATM sell price (when a mod in the setup has an ATM).
 // ATM: full type -> the numbers behind its ATM value (see importer/pzcatalog/economy.py); atm.js works out the
-// payout with the server's settings (ATM_SET, pasted by the user) or the mod's defaults (ATM_DEF, from the version).
-// ATM_COND: firearms, which the ATM pays less for when worn (down to 25% of this at no condition).
-let ATM = new Map(), ATM_COND = new Set(), ATM_DEF = {}, ATM_SET = ATMCalc.load();
+// payout with the server's settings (ATM_SET) or the mod's defaults (ATM_DEF, from the version).
+// The server's settings: the chosen marketplace's (ATM_MKT, set by an admin) and any the user pasted (ATM_USER),
+// which win. ATM_COND: firearms, which the ATM pays less for when worn (down to 25% of this at no condition).
+// SHOP: the server store's [basePrice, category]; BM: what the Black Market trader buys (see atm.js).
+let ATM = new Map(), ATM_COND = new Set(), ATM_DEF = {}, ATM_USER = ATMCalc.load(), ATM_MKT = {}, ATM_SET = { ...ATM_USER };
+let SHOP = new Map(), BM = new Map();
+const setEconomy = () => { ATM_SET = { ...ATM_MKT, ...ATM_USER }; };
 // The mod.info ids in this setup, for the Stockroom page's ATM values (some depend on other mods).
 const SETUP_MODIDS_KEY = "bcedit.modids.v1";
 const atmPrice = ft => ATM.has(ft) ? ATMCalc.payout(ATM.get(ft), ATM_SET, ATM_DEF) : null;
@@ -485,34 +492,43 @@ function layoutCols() {
   cols.push(w("mod"), w("def"), "minmax(150px, 1.4fr)", "64px");
   document.documentElement.style.setProperty("--cols", cols.join(" "));
 }
+// Where the prices' settings come from, in words (sidebar and hover card).
+function economySource() {
+  const mkt = Object.keys(ATM_MKT).length, mine = Object.keys(ATM_USER).length, name = Market.name();
+  if (mkt && mine) return "Using " + name + "'s server settings, with " + mine + " of your own.";
+  if (mkt) return "Using " + name + "'s server settings.";
+  if (mine > 1) return "Using the server settings you pasted (" + mine + ").";
+  return "Using the mod's default settings: pick your server's marketplace, or paste its settings.";
+}
 function showAtmSettings() {
   $("atmPct").value = ATMCalc.sellPercent(ATM_SET, ATM_DEF);
-  const n = Object.keys(ATM_SET).length;
-  $("atmSrc").textContent = n > 1 ? "Using your server's settings (" + n + ")." : "Other percents: the mod's defaults; set yours with Server settings.";
+  $("atmSrc").textContent = economySource();
 }
 $("atmPct").addEventListener("input", () => {
   const v = Number($("atmPct").value);
   if (!($("atmPct").value !== "" && v >= 0 && v <= 10000)) return;
-  ATM_SET = { ...ATM_SET, SellValuePercent: v };
-  ATMCalc.save(ATM_SET); showAtmSettings(); applyFilters();
+  ATM_USER = { ...ATM_USER, SellValuePercent: v }; setEconomy();
+  ATMCalc.save(ATM_USER); showAtmSettings(); applyFilters();
 });
 function atmFoundText() {
   const found = ATMCalc.parse($("atmText").value), n = Object.keys(found).length;
-  $("atmFound").textContent = n ? "Found " + n + " ATM settings: " + Object.entries(found).map(([k, v]) => k + " " + v).join(", ")
-    : "No ATM settings found yet.";
+  $("atmFound").textContent = n ? "Found " + n + " settings: " + Object.entries(found).map(([k, v]) => k + " " + v).join(", ")
+    : "No Server Economy settings found yet.";
   $("atmApply").disabled = !n;
   return found;
 }
 $("atmServerBtn").onclick = () => {
-  $("atmText").value = Object.entries(ATM_SET).map(([k, v]) => k + " " + v).join("\n");
+  $("atmText").value = Object.entries(ATM_USER).map(([k, v]) => k + " " + v).join("\n");
+  $("atmMkt").textContent = Object.keys(ATM_MKT).length ? Market.name() + " already gives " + Object.keys(ATM_MKT).length
+    + " settings (set by an admin); anything you paste here wins over them." : "";
   atmFoundText(); $("atmModal").classList.add("on"); $("atmText").focus();
 };
 $("atmText").addEventListener("input", atmFoundText);
 $("atmCancel").onclick = () => $("atmModal").classList.remove("on");
-$("atmReset").onclick = () => { ATM_SET = {}; ATMCalc.save(ATM_SET); $("atmModal").classList.remove("on"); showAtmSettings(); applyFilters(); };
+$("atmReset").onclick = () => { ATM_USER = {}; setEconomy(); ATMCalc.save(ATM_USER); $("atmModal").classList.remove("on"); showAtmSettings(); applyFilters(); };
 $("atmApply").onclick = () => {
-  ATM_SET = atmFoundText(); ATMCalc.save(ATM_SET); $("atmModal").classList.remove("on"); showAtmSettings(); applyFilters();
-  toast("Using your server's ATM settings.");
+  ATM_USER = atmFoundText(); setEconomy(); ATMCalc.save(ATM_USER); $("atmModal").classList.remove("on"); showAtmSettings(); applyFilters();
+  toast("Using your server's settings.");
 };
 
 function renderSorters() {
@@ -586,7 +602,7 @@ function renderRows(force) {
     const tip = blk && ov ? "Blacklisted: Better Containers ignores your override for this item" : (ov ? "Your override (default: " + catName(defaultOf(it)) + ")" : "Default category");
     h += '<div class="row' + (sel ? " sel" : "") + (it.ft === focusFt ? " focus" : "") + '" style="top:' + (i * ROWH) + 'px" data-i="' + i + '">' +
       '<input type="checkbox" aria-label="Select ' + esc(it.name) + '"' + (sel ? " checked" : "") + '>' + iconHtml(it.icon, 32) +
-      '<div class="nm"><div title="' + esc(it.name) + '">' + esc(it.name) + (it.unknown ? ' <span class="chip warn">not on this PC</span>' : "") + '</div><div class="ft">' + esc(it.ft) + '</div></div>' +
+      '<div class="nm"><div>' + esc(it.name) + (it.unknown ? ' <span class="chip warn">not on this PC</span>' : "") + '</div><div class="ft">' + esc(it.ft) + '</div></div>' +
       '<div class="cell col-w num">' + (it.weight == null ? '<span class="muted">–</span>' : fmtWeight(it.weight)) + '</div>' +
       atmCell(it.ft) +
       priceCells(it.ft) +
@@ -1164,7 +1180,7 @@ async function buildCatalog() {
 
   MODS = layers.map(l => l.kind === "base" ? ["Project Zomboid", "vanilla base game", "", true] : [l.name, l.workshopId || "", l.workshopId || "", true]);
   ICONSETS = layers.map((l, i) => ({ vid: l.versionId, cols: datas[i].icons.cols, perSheet: datas[i].icons.perSheet }));
-  CATNAMES = {}; ATM = new Map(); ATM_COND = new Set(); ATM_DEF = {};
+  CATNAMES = {}; ATM = new Map(); ATM_COND = new Set(); ATM_DEF = {}; SHOP = new Map(); BM = new Map();
   const modIds = new Set(layers.flatMap(l => (l.modIds || []).map(x => x.toLowerCase())));
   try { localStorage.setItem(SETUP_MODIDS_KEY, JSON.stringify([...modIds])); } catch (e) { /* storage unavailable */ }
   const byFt = new Map(), iconByName = new Map();
@@ -1191,6 +1207,8 @@ async function buildCatalog() {
         ATM.set(ft, raw?.[ft] || [val, ""]);
         if (cond.has(ft)) ATM_COND.add(ft); else ATM_COND.delete(ft);
       }
+      for (const [ft, x] of Object.entries((v || d.atmExtra || {}).shop || {})) SHOP.set(ft, x);
+      for (const [ft, x] of Object.entries(d.atmExtra?.blackMarket || {})) BM.set(ft, x);
     }
   });
   ITEMS = [...byFt.values()].map(it => ({ ...it, key: makeKey(it.name, it.ft) }));
@@ -1564,6 +1582,7 @@ const Market = (() => {
 
   async function load() {
     PRICES = null;
+    ATM_MKT = (markets.find(x => x.id === choice) || {}).economySettings || {}; setEconomy(); showAtmSettings();
     if (choice) {
       try {
         const r = await fetch("/api/markets/" + encodeURIComponent(choice) + "/prices", { credentials: "same-origin" });
@@ -1607,8 +1626,29 @@ const Market = (() => {
     await load();
   }
 
-  return { init, focus: () => { $("marketSel").focus(); $("marketSel").scrollIntoView({ block: "center" }); } };
+  return { init, focus: () => { $("marketSel").focus(); $("marketSel").scrollIntoView({ block: "center" }); },
+    name: () => (markets.find(x => x.id === choice) || {}).name || "the marketplace" };
 })();
+
+// ------------------------------------------------------------ item hover card
+// What the item is worth where: ATM, server store, Black Market (Server Economy) and the chosen marketplace.
+function cardFacts(ft) {
+  const it = BYFT.get(ft);
+  if (!it) return null;
+  const f = { name: it.name, ft, weight: it.weight == null ? null : fmtWeight(it.weight) };
+  if (ATM.has(ft)) f.atm = { each: atmPrice(ft), pct: ATMCalc.sellPercent(ATM_SET, ATM_DEF), condition: ATM_COND.has(ft) };
+  if (SHOP.has(ft)) f.store = { price: ATMCalc.storePrice(SHOP.get(ft), ATM_SET, ATM_DEF), fluct: ATMCalc.fluctuation(ATM_SET, ATM_DEF) };
+  if (BM.has(ft)) { const b = ATMCalc.blackMarket(BM.get(ft), ATM_SET, ATM_DEF); if (b) f.blackMarket = b; }
+  if (f.atm || f.store || f.blackMarket) f.settings = economySource();
+  const p = PRICES && PRICES.get(ft);
+  if (p) f.market = { name: Market.name(), avg: p[0], low: p[1], high: p[2], n: p[3], now: p[4], owner: p[5], shop: p[6], qty: p[8] };
+  return f;
+}
+const itemCard = ItemCard.attach($("rows"), ".nm", el => {
+  const row = el.closest(".row");
+  return row ? cardFacts(filtered[Number(row.dataset.i)]?.ft) : null;
+});
+$("scroller").addEventListener("scroll", itemCard.hide);
 
 // ------------------------------------------------------------ boot
 async function boot() {

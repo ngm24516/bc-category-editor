@@ -12,6 +12,7 @@
 <script src="account-menu.js"></script>
 <script src="stockroom-codec.js"></script>
 <script src="atm.js"></script>
+<script src="item-card.js"></script>
 </head>
 <body class="admin stockroom">
 <header>
@@ -39,9 +40,12 @@ const money = v => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const FT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+$/;
 const FOLDER = "%USERPROFILE%\\Zomboid\\Lua\\Stockroom";
 
-let chars = [], cur = null, markets = [], choice = null, PRICES = null, LOOK = { items: {}, iconSets: {}, atm: {}, raw: {}, def: {}, cond: new Set() };
-// Server Economy's ATM: the server's settings (set in the editor's Server settings, shared) or the mod's defaults.
-let ATM_SET = ATMCalc.load();
+let chars = [], cur = null, markets = [], choice = null, PRICES = null, LOOK = { items: {}, iconSets: {}, atm: {}, raw: {}, def: {}, cond: new Set(), shop: {}, bm: {} };
+// Server Economy's prices: the chosen marketplace's server settings (set by an admin), overridden by any the user
+// pasted in the editor's Server settings (shared), else the mod's defaults.
+let ATM_USER = ATMCalc.load(), ATM_SET = { ...ATM_USER };
+const marketSettings = () => (markets.find(x => x.id === choice) || {}).economySettings || {};
+const setEconomy = () => { ATM_SET = { ...marketSettings(), ...ATM_USER }; };
 const atmRaw = ft => LOOK.raw[ft] || [LOOK.atm[ft], ""];   // versions before format 4 have only the value
 const atmUnit = ft => (ft in LOOK.atm ? ATMCalc.value(atmRaw(ft), ATM_SET, LOOK.def, true) : null);
 const atmPct = () => ATMCalc.sellPercent(ATM_SET, LOOK.def);
@@ -83,6 +87,7 @@ async function loadLookup() {
     const r = await api("POST", "/api/catalog/lookup", { fullTypes: fts, modIds });
     Object.assign(LOOK.items, r.items); Object.assign(LOOK.iconSets, r.iconSets); Object.assign(LOOK.atm, r.atm || {});
     Object.assign(LOOK.raw, r.atmRaw || {}); Object.assign(LOOK.def, r.atmDefaults || {});
+    Object.assign(LOOK.shop, r.shop || {}); Object.assign(LOOK.bm, r.blackMarket || {});
     for (const ft of r.atmCondition || []) LOOK.cond.add(ft);
     for (const f of fts) if (!(f in LOOK.items)) LOOK.items[f] = null;
   } catch { /* names fall back to the item type */ }
@@ -167,7 +172,7 @@ function render() {
       ${!PRICES ? `<p class="notice info show sr-note">${markets.length ? "Choose a marketplace under <b>Prices from</b> to see what each item is worth." : "No marketplace has been added yet, so there are no prices to show."}</p>` : ""}
       <div class="sr-table"><table class="grid"><thead><tr><th></th>${th("name", "Item")}${th("n", "Qty", "num")}${hasAtm ? th("atm", "ATM", "num") : ""}${th("avg", "Avg", "num")}${th("low", "Low", "num")}${th("high", "High", "num")}${th("now", "Now", "num")}${th("value", "Value", "num")}</tr></thead><tbody>
       ${shown.slice(0, LIMIT).map(r => `<tr><td>${icon(r.ft)}</td>
-        <td><span class="nm1">${esc(r.name)}</span><span class="sub mono">${esc(r.ft)}${r.known ? "" : " · not in the catalog"}</span></td>
+        <td class="sr-item" data-ft="${esc(r.ft)}"><span class="nm1">${esc(r.name)}</span><span class="sub mono">${esc(r.ft)}${r.known ? "" : " · not in the catalog"}</span></td>
         <td class="num">${r.n.toLocaleString()}</td>
         ${hasAtm ? (r.atm == null ? '<td class="num muted">–</td>' : `<td class="num" title="Value ${money(ATMCalc.value(atmRaw(r.ft), ATM_SET, LOOK.def))} × ${esc(atmPct())}% · ${money(r.atmTotal)} for all ${r.n.toLocaleString()}${LOOK.cond.has(r.ft) ? " at full condition; worn ones pay less (down to 25%)" : ""}">${money(r.atm)}</td>`) : ""}
         ${r.p ? `<td class="num" title="Average of ${r.p[3]} listing${r.p[3] === 1 ? "" : "s"}">${money(r.p[0])}</td><td class="num">${money(r.p[1])}</td><td class="num">${money(r.p[2])}</td>${nowCell(r.p)}<td class="num"><b>${money(Math.round(r.value))}</b></td>`
@@ -181,9 +186,30 @@ function render() {
 // The cheapest listing on the marketplace right now and who sells it (p[4..6]); "–" when none is listed now.
 function nowCell(p) {
   if (p[4] == null) return '<td class="num muted" title="Not listed right now">–</td>';
-  return `<td class="num now" title="Cheapest now: ${esc(money(p[4]))}${p[5] ? ` from ${esc(p[5])}` : ""}${p[6] ? ` at ${esc(p[6])}` : ""}">` +
-    `${money(p[4])}${p[5] ? `<small>${esc(p[5])}</small>` : ""}</td>`;
+  // p[8]: how many are listed now at that price
+  const qty = p[8] != null ? p[8].toLocaleString() : null;
+  return `<td class="num now" title="Cheapest now: ${esc(money(p[4]))}${p[5] ? ` from ${esc(p[5])}` : ""}${p[6] ? ` at ${esc(p[6])}` : ""}${qty ? `, ${qty} listed at that price` : ""}">` +
+    `${money(p[4])}${qty ? ` <span class="qty">(${qty})</span>` : ""}${p[5] ? `<small>${esc(p[5])}</small>` : ""}</td>`;
 }
+
+// The item hover card: ATM, server store, Black Market and marketplace prices for one item.
+function cardFacts(ft) {
+  const c = chars.find(x => x.id === cur), n = c ? c.items[ft] : null, it = LOOK.items[ft];
+  const f = { name: it ? it.name : ft, ft, qty: n };
+  const u = atmUnit(ft);
+  if (u != null) f.atm = { each: Math.floor(u + 1e-9), total: n ? Math.floor(u * n + 1e-9) : null, pct: atmPct(), condition: LOOK.cond.has(ft) };
+  if (LOOK.shop[ft]) f.store = { price: ATMCalc.storePrice(LOOK.shop[ft], ATM_SET, LOOK.def), fluct: ATMCalc.fluctuation(ATM_SET, LOOK.def) };
+  if (LOOK.bm[ft]) { const b = ATMCalc.blackMarket(LOOK.bm[ft], ATM_SET, LOOK.def); if (b) f.blackMarket = b; }
+  if (f.atm || f.store || f.blackMarket) {
+    const m = markets.find(x => x.id === choice), mkt = Object.keys(marketSettings()).length, mine = Object.keys(ATM_USER).length;
+    f.settings = mkt ? `Using ${m.name}'s server settings${mine ? `, with ${mine} of your own` : ""}.`
+      : mine > 1 ? "Using the server settings you pasted in the editor." : "Using the mod's default settings.";
+  }
+  const p = PRICES && PRICES.get(ft);
+  if (p) f.market = { name: (markets.find(x => x.id === choice) || {}).name, avg: p[0], low: p[1], high: p[2], n: p[3], now: p[4], owner: p[5], shop: p[6], qty: p[8] };
+  return f;
+}
+ItemCard.attach(document.body, ".sr-item", el => cardFacts(el.dataset.ft));
 
 function message(html) { $("page").innerHTML = `<div class="panel"><div class="empty">${html}</div></div>`; }
 
@@ -242,11 +268,11 @@ $("page").addEventListener("change", async e => {
   if (e.target.id === "atmPct") {
     const v = Number(e.target.value);
     if (!(e.target.value !== "" && v >= 0 && v <= 10000)) return;
-    ATM_SET = { ...ATM_SET, SellValuePercent: v }; ATMCalc.save(ATM_SET);
+    ATM_USER = { ...ATM_USER, SellValuePercent: v }; ATMCalc.save(ATM_USER); setEconomy();
     return render();
   }
   if (e.target.id !== "market") return;
-  choice = e.target.value || null;
+  choice = e.target.value || null; setEconomy();
   try { await api("PUT", "/api/markets/choice", { marketplaceId: choice }); } catch (err) { toast(err.message); }
   await loadPrices(); render();
 });
@@ -258,7 +284,7 @@ $("page").addEventListener("change", async e => {
   if (!me) return message("Sign in to see your stockroom. Use <b>Log in with Discord</b> at the top right.");
   try {
     const m = await api("GET", "/api/markets");
-    markets = m.markets; choice = m.choice;
+    markets = m.markets; choice = m.choice; setEconomy();
     await Promise.all([loadPrices(), loadChars()]);
   } catch (e) { return message(esc(e.message)); }
   render();
