@@ -1435,6 +1435,12 @@ const Account = (() => {
       } else if (r.status === 401) {
         enabled = false; status("Signed out", true);
         notice('You were signed out, so changes are only kept in this browser. <a class="btn discord" href="/auth/discord/login">Log in again</a>', "warn");
+      } else if (r.status >= 400 && r.status < 500) {
+        // The account refused this setup (e.g. a mod that's no longer in the catalog): retrying won't help, so say so
+        // loudly. The edits stay in this browser and are offered again the next time the page opens.
+        status("Not saved", true);
+        notice("Your changes couldn't be saved to your account: " + esc((r.data && r.data.message) || "the server refused them (" + r.status + ")") +
+          ". They're kept in this browser for now; fix that and they'll save. To be safe, use <b>Save to game…</b> to keep a copy of your .ini files.", "warn");
       } else {
         status("Couldn't save, retrying…", true); clearTimeout(timer); timer = setTimeout(save, 10000);
       }
@@ -1512,9 +1518,30 @@ const Account = (() => {
     const full = await call("GET", "/api/sets/" + pick.id);
     if (!full.ok) { status("Couldn't load your setup", true); return; }
     // Edits made in this browser while signed out (not tied to a saved setup) are offered as a new setup.
-    const strayEdits = draft && !draft.a && localSig !== sig({ overrides: full.data.overrides, definitions: full.data.definitions, blacklist: full.data.blacklist, mods: full.data.mods }) && (overrides.size || defs.size || MODLIST.length);
+    const serverSig = sig({ overrides: full.data.overrides, definitions: full.data.definitions, blacklist: full.data.blacklist, mods: full.data.mods });
+    const strayEdits = draft && !draft.a && localSig !== serverSig && (overrides.size || defs.size || MODLIST.length);
+    // Edits to this very setup that never reached the account (the page closed before saving, or saving failed),
+    // newer than what the account has: offer them instead of quietly replacing them with the saved setup.
+    const unsaved = draft && draft.a === pick.id && localSig !== serverSig && draft.t > Date.parse(full.data.updatedAt);
     await apply(full.data);
-    if (strayEdits) {
+    if (unsaved) {
+      notice('This browser has changes to <b>' + esc(full.data.name) + '</b> from ' + esc(new Date(draft.t).toLocaleString()) +
+        " that aren't in your account (" + Object.keys(local.overrides).length.toLocaleString() + " overrides, " +
+        Object.keys(local.definitions).length.toLocaleString() + " custom categories here; " +
+        Object.keys(full.data.overrides).length.toLocaleString() + " and " + Object.keys(full.data.definitions).length.toLocaleString() +
+        ' saved). <button id="useLocal">Use this browser\'s changes</button> <button id="useSaved">Keep the saved setup</button>', "warn");
+      $("useLocal").onclick = async () => {
+        MODLIST = local.mods || [];
+        try { await buildCatalog(); } catch (e) { /* the item list says so */ }
+        updateModsButton();
+        overrides = new Map(Object.entries(local.overrides)); defs = new Map(Object.entries(local.definitions));
+        $("blk").value = local.blacklist;
+        ensureUnknownItems();
+        $("blk").dispatchEvent(new Event("input"));   // refreshes everything and saves to the account
+        notice("Using this browser's changes; saving them to your account.", "info");
+      };
+      $("useSaved").onclick = () => notice("Kept the setup saved in your account.", "info");
+    } else if (strayEdits) {
       notice('Opened your saved setup <b>' + esc(full.data.name) + '</b>. This browser also had edits made while signed out. ' +
         '<button id="keepLocal">Save them as a new setup</button>', "info");
       $("keepLocal").onclick = async () => {
