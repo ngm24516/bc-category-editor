@@ -6,7 +6,7 @@
 //            atm?: { each, pct, condition?, total? },          ATM payout (whole numbers, like the ATM)
 //            store?: { price, fluct? },                         server store price, ± fluct% with its stock
 //            blackMarket?: { each, dmz, dmzPct },               Black Market trader estimate (Narcotics & Crime)
-//            market?: { name, avg, low, high, n, now?, qty?, owner?, shop? },
+//            market?: { name, avg, low, high, n, now?, qty?, owner?, shop?, avgLow?, days? },
 //            settings?: "where the server settings come from" }
 (function () {
   const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -40,6 +40,7 @@
       h += `<div class="ic-sec"><div class="ic-title">${esc(m.name || "Marketplace")}</div>` +
         (m.now != null ? row("Cheapest now", "$" + money(m.now) + (m.qty != null ? ` <small>(${esc(m.qty.toLocaleString())} listed)</small>` : ""),
           m.owner || m.shop ? `From ${esc(m.owner || "")}${m.shop ? (m.owner ? " at " : "") + esc(m.shop) : ""}.` : "") : row("Cheapest now", "not listed")) +
+        (m.avgLow != null ? row("Average daily low", "$" + money(m.avgLow), `The cheapest listing on each of ${esc(m.days)} day${m.days === 1 ? "" : "s"} it was listed, averaged.`) : "") +
         row("Average", "$" + money(m.avg)) + row("Low · High", "$" + money(m.low) + " · $" + money(m.high)) +
         `<div class="ic-note">Over ${esc(m.n.toLocaleString())} listing${m.n === 1 ? "" : "s"} seen.</div></div>`;
     }

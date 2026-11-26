@@ -101,7 +101,7 @@
       <span class="spacer"></span>
       <span class="muted" id="shownInfo"></span>
     </div>
-    <div class="thead"><span></span><span></span><div class="th" data-col="item">Item<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-w" data-col="weight"><button class="sorter" data-sort="weight" title="Weight in the game. Click to sort">Weight</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-atm" data-col="atm"><button class="sorter" data-sort="atm" title="What the Server Economy ATM pays for one (baseValue × ATM sell %). Click to sort">ATM</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price" data-col="avg"><button class="sorter" data-sort="avg" title="Average price of every listing seen. Click to sort">Avg</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="low"><button class="sorter" data-sort="low" title="Lowest listing price seen. Click to sort">Low</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="high"><button class="sorter" data-sort="high" title="Highest listing price seen. Click to sort">High</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="now"><button class="sorter" data-sort="now" title="Cheapest listing on the marketplace right now, and who sells it. Click to sort">Now</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-mod" data-col="mod">Mod<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-def" data-col="def">Default<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><span>Category</span><span></span></div>
+    <div class="thead"><span></span><span></span><div class="th" data-col="item">Item<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-w" data-col="weight"><button class="sorter" data-sort="weight" title="Weight in the game. Click to sort">Weight</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-atm" data-col="atm"><button class="sorter" data-sort="atm" title="What the Server Economy ATM pays for one (baseValue × ATM sell %). Click to sort">ATM</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price" data-col="avg"><button class="sorter" data-sort="avg" title="Average price of every listing seen. Click to sort">Avg</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price" data-col="avglow"><button class="sorter" data-sort="avglow" title="Average daily low: the cheapest listing on each day it was listed, averaged. What buying it cheaply typically costs. Click to sort">Avg low</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="low"><button class="sorter" data-sort="low" title="Lowest listing price seen. Click to sort">Low</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="high"><button class="sorter" data-sort="high" title="Highest listing price seen. Click to sort">High</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-price col-lh" data-col="now"><button class="sorter" data-sort="now" title="Cheapest listing on the marketplace right now, and who sells it. Click to sort">Now</button><span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-mod" data-col="mod">Mod<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><div class="th col-def" data-col="def">Default<span class="rsz" aria-hidden="true" title="Drag to resize; double-click to reset"></span></div><span>Category</span><span></span></div>
     <div class="scroller" id="scroller" tabindex="0" aria-label="Items. Click to select, drag, Ctrl+click, Shift+click, Ctrl+A"><div class="rows" id="rows"></div></div>
   </section>
 
@@ -451,6 +451,7 @@ function priceCells(ft) {
       + (p[8] != null ? ", " + p[8].toLocaleString() + " listed at that price" : "") + '">' +
       money(p[4]) + (p[8] != null ? ' <span class="qty">(' + p[8].toLocaleString() + ')</span>' : "") + (p[5] ? '<small>' + esc(p[5]) + '</small>' : "") + '</div>';
   return '<div class="cell col-price" title="Average of ' + n + '">' + money(p[0]) + '</div>' +
+    '<div class="cell col-price" title="Average of the cheapest listing on each of ' + p[10] + ' day' + (p[10] === 1 ? "" : "s") + ' listed">' + money(p[9]) + '</div>' +
     '<div class="cell col-price col-lh" title="Lowest of ' + n + '">' + money(p[1]) + '</div>' +
     '<div class="cell col-price col-lh" title="Highest of ' + n + '">' + money(p[2]) + '</div>' + now;
 }
@@ -477,18 +478,18 @@ function atmCell(ft) {
 function sortValue(key) {
   if (key === "weight") return it => it.weight;
   if (key === "atm") return it => atmPrice(it.ft);
-  const k = { avg: 0, low: 1, high: 2, now: 4 }[key];
+  const k = { avg: 0, low: 1, high: 2, now: 4, avglow: 9 }[key];
   return it => { const p = PRICES && PRICES.get(it.ft); return p ? p[k] ?? null : null; };
 }
 // The list's columns depend on what's showing (ATM, marketplace prices), so the grid template is built here;
 // each width can be dragged (Cols below) and is a CSS variable.
-const COL_DEFAULT = { item: "minmax(200px, 2.2fr)", weight: "68px", atm: "76px", avg: "84px", low: "72px", high: "72px", now: "120px",
+const COL_DEFAULT = { item: "minmax(200px, 2.2fr)", weight: "68px", atm: "76px", avg: "84px", avglow: "84px", low: "72px", high: "72px", now: "120px",
   mod: "minmax(110px, 1fr)", def: "minmax(120px, 1.1fr)" };
 function layoutCols() {
   const w = c => "var(--w-" + c + ", " + COL_DEFAULT[c] + ")";
   const cols = ["30px", "32px", w("item"), w("weight")];
   if (ATM.size) cols.push(w("atm"));
-  if (PRICES) cols.push(w("avg"), w("low"), w("high"), w("now"));
+  if (PRICES) cols.push(w("avg"), w("avglow"), w("low"), w("high"), w("now"));
   cols.push(w("mod"), w("def"), "minmax(150px, 1.4fr)", "64px");
   document.documentElement.style.setProperty("--cols", cols.join(" "));
 }
@@ -555,7 +556,7 @@ const Cols = (() => {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
   const apply = () => {
-    for (const col of ["item", "weight", "atm", "avg", "low", "high", "now", "mod", "def"]) {
+    for (const col of ["item", "weight", "atm", "avg", "avglow", "low", "high", "now", "mod", "def"]) {
       if (saved[col]) document.documentElement.style.setProperty("--w-" + col, saved[col] + "px");
       else document.documentElement.style.removeProperty("--w-" + col);
     }
@@ -1616,7 +1617,7 @@ const Market = (() => {
         if (r.ok) PRICES = new Map(Object.entries((await r.json()).items));
       } catch (e) { /* offline: no prices */ }
     }
-    if (!PRICES && F.sort && ["avg", "low", "high", "now"].includes(F.sort.key)) F.sort = null;
+    if (!PRICES && F.sort && ["avg", "avglow", "low", "high", "now"].includes(F.sort.key)) F.sort = null;
     document.body.classList.toggle("prices-on", !!PRICES);
     layoutCols(); renderSorters(); applyFilters(); info();
   }
@@ -1668,7 +1669,7 @@ function cardFacts(ft) {
   if (BM.has(ft)) { const b = ATMCalc.blackMarket(BM.get(ft), ATM_SET, ATM_DEF); if (b) f.blackMarket = b; }
   if (f.atm || f.store || f.blackMarket) f.settings = economySource();
   const p = PRICES && PRICES.get(ft);
-  if (p) f.market = { name: Market.name(), avg: p[0], low: p[1], high: p[2], n: p[3], now: p[4], owner: p[5], shop: p[6], qty: p[8] };
+  if (p) f.market = { name: Market.name(), avg: p[0], low: p[1], high: p[2], n: p[3], now: p[4], owner: p[5], shop: p[6], qty: p[8], avgLow: p[9], days: p[10] };
   return f;
 }
 const itemCard = ItemCard.attach($("rows"), ".nm", el => {
