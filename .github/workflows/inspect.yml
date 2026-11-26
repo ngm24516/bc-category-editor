@@ -15,7 +15,10 @@ jobs:
               [ -d /tmp/s/steamapps/workshop/content/108600/3728629828 ] && break; sleep 5; done'
           docker cp dl:/tmp/s/steamapps/workshop/content/108600/3728629828 out/mod
           cd "out/mod/mods/Server Economy/42/media"
-          echo "=== money mentions ==="; grep -rnI -i -E 'money|cash|banknote|bill(s)?\b|currency' --include=*.lua --include=*.txt . | grep -v -i 'blackmarket\|contraband' | head -250
-          echo "=== deposit functions ==="; grep -rnI -E 'function [A-Za-z_.:]*([Dd]eposit|[Ww]ithdraw)' . | head -40
-          echo "=== sandbox money options ==="; grep -nA8 -i -E 'option ServerEconomy\.[A-Za-z]*(Money|Cash|Deposit|Withdraw|Currency)' sandbox-options.txt | grep -E 'option|default' | head -40
-          echo "=== translations ==="; grep -rnI -i -E 'money|deposit|withdraw' lua/shared/Translate/EN 2>/dev/null | head -60; grep -rnI -i -E '"[^"]*(money|deposit|withdraw)[^"]*"' lua/shared/translate 2>/dev/null | head -60
+          echo "=== files ==="; find . -type f | sort | xargs -d '\n' wc -c | sort -k2 | head -150
+          echo "=== blackmarket shared/server/client files (full) ==="
+          for f in $(find . -type f -iname '*blackmarket*' | sort); do echo "##### $f"; cat "$f"; done
+          echo "=== HZEconomyShared price functions ==="; grep -nE 'function HZEconomyShared\.' lua/shared/HZEconomyShared.lua
+          for fn in getVendingPrice getBuyPrice getProductPrice getStockPrice getDynamicPrice getPrice getSellPrice; do grep -nA40 "function HZEconomyShared.$fn\b" lua/shared/HZEconomyShared.lua; done
+          echo "=== buy price in server ==="; grep -rnE 'getVendingPrice|getBuyPrice|getProductPrice|priceFor|stockPrice|demand' lua/server lua/shared | grep -v -i blackmarket | head -80
+          echo "=== sandbox: all ServerEconomy options with defaults ==="; awk '/^option ServerEconomy\./{o=$2} /default *=/{if(o){print o, $0; o=""}}' sandbox-options.txt
