@@ -22,18 +22,27 @@ buyback's value is floor(basePrice x GlobalPricePercent x <Category>PricePercent
 (the value at the mod's defaults, before SellValuePercent) we store what the editor needs to redo the sum with the
 server's own settings (web/atm.js, which must match atm_value below):
   raw: {fullType: [value, sellCategory]} or, for buybacks, [shop basePrice, sellCategory, shopCategory, scale]
-  defaults: the mod's sandbox defaults for the options in SANDBOX_OPTIONS
+  defaults: the mod's sandbox defaults for the economy settings (is_setting)
+
+Also, for the item hover card (format 5):
+  shop: {fullType: [basePrice, shopCategory]}: the server store sells it for
+        floor(basePrice x GlobalPricePercent x <Category>PricePercent), before its stock-based fluctuation
+  blackMarket: {fullType: [family, priceKey, bandId]}: the Black Market trader buys Narcotics & Crime products
+        (HZContrabandShared.lua); the payout is worked out by the mod's Java code from the band (or custom price)
+        and payout percents, so web/atm.js gives an estimate
 
 read_economy() returns None for other mods, else:
   { "atm": {fullType: value}, "raw": {...}, "condition": [fullTypes that pay less when worn], "defaults": {...},
-    "variants": [{ "requires": ["SWMG", "GunsOfMarz"], "atm": {...}, "raw": {...}, "condition": [...] }] }
+    "shop": {...}, "blackMarket": {...},
+    "variants": [{ "requires": ["SWMG", "GunsOfMarz"], "atm": {...}, "raw": {...}, "condition": [...], "shop": {...} }] }
 """
 import math
 import os
 import re
 
 SHARED = os.path.join("lua", "shared")
-FILES = {"sellables": "HZEconomySellables.lua", "products": "HZEconomyProducts.lua", "gom": "HZEconomyGunsOfMarzProducts.lua"}
+FILES = {"sellables": "HZEconomySellables.lua", "products": "HZEconomyProducts.lua", "gom": "HZEconomyGunsOfMarzProducts.lua",
+         "contraband": "HZContrabandShared.lua"}
 GOM_MODS = ["SWMG", "GunsOfMarz"]
 MAX_FILE = 4 * 1024 * 1024
 FULL_TYPE = r"[A-Za-z0-9_\-]+\.[A-Za-z0-9_.\-]+"
@@ -55,9 +64,6 @@ SELL_OPTIONS = {"general": "General", "junk_collectibles": "JunkCollectibles", "
                 "onelife_currency": "OneLifeCurrency", "precious_metals": "PreciousMetals", "lab_ingots": "LabIngots",
                 "weapons_firearms": "Firearms", "ammunition": "AmmunitionCategory", "magazines": "MagazinesCategory",
                 "weapon_attachments": "WeaponAttachmentsCategory"}
-SANDBOX_OPTIONS = (["SellValuePercent", "GlobalPricePercent"] + [v + "PricePercent" for v in PRICE_OPTIONS.values()]
-                   + [v + "SellbackPercent" for v in SELLBACK_OPTIONS.values()]
-                   + [v + "SellValuePercent" for v in SELL_OPTIONS.values()])
 DEFAULT_BUYBACK = ["weapons_firearms", "ammunition", "magazines", "weapon_attachments"]
 
 
@@ -115,12 +121,33 @@ def _number_table(block):
     return out
 
 
+# The sandbox settings the editor uses (web/atm.js isSetting must match): percents, contraband prices and bands,
+# family switches and the pricing preset.
+SETTING = re.compile(r"^(?:[A-Za-z]+Percent|Price[A-Za-z0-9]+|Band(?:Min|Max)[A-Za-z0-9]+|Enable[A-Za-z]+|[A-Za-z]+DemandWeight"
+                     r"|PricingPreset|MigrateLegacyMethBand)$")
+
+
+def is_setting(name):
+    return bool(SETTING.match(name))
+
+
 def _sandbox_defaults(text):
+    """{option: number} from sandbox-options.txt, for every Server Economy namespace; true/false become 1/0."""
     out = {}
-    for m in re.finditer(r"option\s+ServerEconomy\.([A-Za-z]+)\s*\{([^}]*)\}", text or ""):
-        d = re.search(r"\bdefault\s*=\s*([0-9.]+)", m.group(2))
-        if d:
-            out[m.group(1)] = float(d.group(1))
+    for m in re.finditer(r"option\s+ServerEconomy[A-Za-z]*\.([A-Za-z0-9]+)\s*\{([^}]*)\}", text or ""):
+        d = re.search(r"\bdefault\s*=\s*(true|false|-?[0-9]+(?:\.[0-9]+)?)", m.group(2))
+        if d and is_setting(m.group(1)):
+            v = d.group(1)
+            out[m.group(1)] = 1 if v == "true" else 0 if v == "false" else float(v)
+    return out
+
+
+def _contraband(text):
+    """{fullType: [family, priceKey, bandId]}: what the Black Market trader buys (product(...) in HZContrabandShared)."""
+    out = {}
+    for m in re.finditer(r'^\s*product\(\s*"([A-Za-z0-9_]+)"\s*,\s*"[^"]*"\s*,\s*"([A-Za-z]+)"\s*,\s*"([A-Za-z0-9_]+)"',
+                         text or "", re.M):
+        out["NnC." + m.group(1)] = [m.group(2), "Price" + m.group(3), m.group(1)]
     return out
 
 
@@ -247,6 +274,15 @@ def _sell_table(sellables, products, buyback):
     return raw, sorted(set(condition) & set(raw))
 
 
+def _shop(products):
+    """{fullType: [basePrice, category]}: everything the server store sells."""
+    out = {}
+    for cat, items in products.items():
+        for ft, price, _ in items:
+            out[ft] = [int(price) if float(price).is_integer() else price, cat]
+    return out
+
+
 def read_economy(media_roots):
     for media in media_roots:
         shared = os.path.join(media, SHARED)
@@ -269,10 +305,11 @@ def read_economy(media_roots):
         sellables = {ft: tuple(v) for ft, v in sellables.items()}
         buyback = _strings(_block(sell_text, r"local buybackCategories\s*=")) or DEFAULT_BUYBACK
         products = _products(_read(os.path.join(shared, FILES["products"])))
-        defaults = {k: v for k, v in sandbox.items() if k in SANDBOX_OPTIONS}
+        defaults = {k: (int(v) if float(v).is_integer() else v) for k, v in sandbox.items()}
         raw, condition = _sell_table(sellables, products, buyback)
         result = {"atm": {ft: atm_value(r, defaults) for ft, r in raw.items()}, "raw": raw, "condition": condition,
-                  "defaults": defaults, "variants": []}
+                  "defaults": defaults, "shop": _shop(products),
+                  "blackMarket": _contraband(_read(os.path.join(shared, FILES["contraband"]))), "variants": []}
 
         gom_text = _read(os.path.join(shared, FILES["gom"]))
         if gom_text:
@@ -290,7 +327,7 @@ def read_economy(media_roots):
                     if canonical in v_raw:
                         v_raw[alias] = v_raw[canonical]
                 result["variants"].append({"requires": GOM_MODS, "atm": {ft: atm_value(r, defaults) for ft, r in v_raw.items()},
-                                           "raw": v_raw, "condition": v_cond})
+                                           "raw": v_raw, "condition": v_cond, "shop": _shop(merged)})
         return result
     return None
 

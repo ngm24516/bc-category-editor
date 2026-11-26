@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="app.css">
 <script src="account-menu.js"></script>
+<script src="atm.js"></script>
 </head>
 <body class="admin">
 <header>
@@ -34,8 +35,18 @@
       <code>listing_id</code>, <code>full_type</code> and <code>price</code>. The market job then reads every page each hour; prices are per item,
       and only items in the library get a price. Everyone can pick an enabled marketplace in the editor.
       <b>Ignore overpriced</b> leaves listings out of the prices (they stay recorded): at or above a placeholder price ("not for sale"), or over
-      that many times the item's median price (when it has at least 3 listings and the price is at least 100). Use 0 to turn that rule off.</p>
+      that many times the item's median price (when it has at least 3 listings and the price is at least 100). Use 0 to turn that rule off.
+      <b>Server settings</b> are the game server's Server Economy sandbox settings: everyone who picks the marketplace gets that server's
+      ATM, store and Black Market prices.</p>
     <div id="marketTable"></div>
+    <div id="ecoEdit" class="eco-edit" hidden>
+      <h3>Server settings for <span id="ecoName"></span></h3>
+      <p class="muted-note">Paste the game server's Server Economy sandbox settings: the server console's sandbox list, <code>SandboxVars.lua</code>
+        or <code>servertest_SandboxVars.lua</code>. Only the economy settings are kept (percents, contraband prices and bands).</p>
+      <textarea id="ecoText" class="mono" rows="10" spellcheck="false"></textarea>
+      <p class="muted-note" id="ecoFound"></p>
+      <div class="acts"><button id="ecoClear">Clear them</button><button id="ecoCancel">Cancel</button><button id="ecoSave" class="primary">Save</button></div>
+    </div>
   </section>
 </main>
 <script>
@@ -185,7 +196,7 @@ function renderMarkets() {
   $("marketCount").textContent = markets.length;
   if (!markets.length) { $("marketTable").innerHTML = `<p class="empty muted">No marketplaces yet. Add one above.</p>`; return; }
   $("marketTable").innerHTML = `<table class="grid"><thead><tr><th>Marketplace</th><th>Status</th><th>Last snapshot</th>
-      <th>Listings now</th><th>Items priced</th><th>Prices recorded</th><th>Ignore overpriced</th><th></th></tr></thead><tbody>${markets.map(m => `<tr>
+      <th>Listings now</th><th>Items priced</th><th>Prices recorded</th><th>Ignore overpriced</th><th>Server settings</th><th></th></tr></thead><tbody>${markets.map(m => `<tr>
       <td><b>${esc(m.name)}</b><span class="sub" title="${esc(m.url)}">${esc(m.url.length > 70 ? m.url.slice(0, 70) + "…" : m.url)}</span>
         <span class="sub">Added ${esc(fmtTime(m.createdAt))}${m.addedBy ? " by " + esc(m.addedBy) : ""}</span></td>
       <td>${m.enabled ? (m.lastError ? badge("failed") : m.lastCheckedAt ? badge("succeeded") : badge("queued")) : '<span class="badge skipped">Paused</span>'}
@@ -196,6 +207,8 @@ function renderMarkets() {
       <td class="rules"><label>at or above <input type="number" min="1" step="1" data-ignore="${esc(m.id)}" value="${m.ignoreAt ?? ""}" placeholder="no limit"></label>
         <label>over <input type="number" min="0" max="1000" step="1" data-factor="${esc(m.id)}" value="${m.outlierFactor ?? 0}">× the item's median</label>
         <button data-rules="${esc(m.id)}">Save</button></td>
+      <td>${m.economySettings ? Object.keys(m.economySettings).length + " settings" : '<span class="muted">Mod defaults</span>'}
+        <button data-eco="${esc(m.id)}">${m.economySettings ? "Change…" : "Paste…"}</button></td>
       <td class="acts"><button data-toggle="${esc(m.id)}" data-enabled="${m.enabled}">${m.enabled ? "Pause" : "Resume"}</button>
         <button data-del="${esc(m.id)}" class="${confirmDelete === m.id ? "danger" : ""}">${confirmDelete === m.id ? "Delete its history?" : "Remove"}</button></td>
     </tr>`).join("")}</tbody></table>`;
@@ -224,7 +237,38 @@ $("marketForm").addEventListener("submit", async ev => {
     $("mNote").textContent = e.message; $("mNote").classList.add("err");
   } finally { $("mAdd").disabled = false; }
 });
+// ---- a marketplace's server settings
+let ecoId = null;
+function ecoFound() {
+  const v = ATMCalc.parse($("ecoText").value), n = Object.keys(v).length;
+  $("ecoFound").textContent = n ? `Found ${n} settings: ` + Object.entries(v).slice(0, 40).map(([k, x]) => `${k} ${x}`).join(", ") + (n > 40 ? ", …" : "")
+    : "No Server Economy settings found yet.";
+  $("ecoSave").disabled = !n;
+  return v;
+}
+async function saveEco(value) {
+  try {
+    await getJson(`/api/admin/markets/${ecoId}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ economySettings: value }) });
+    $("updated").textContent = value ? "Saved the server settings." : "Cleared the server settings.";
+    $("ecoEdit").hidden = true; ecoId = null;
+    await refreshMarkets();
+  } catch (e) { $("ecoFound").textContent = e.message; }
+}
+$("ecoText").addEventListener("input", ecoFound);
+$("ecoSave").onclick = () => saveEco(ecoFound());
+$("ecoClear").onclick = () => saveEco(null);
+$("ecoCancel").onclick = () => { $("ecoEdit").hidden = true; ecoId = null; };
+
 $("marketTable").addEventListener("click", async ev => {
+  const eco = ev.target.closest("[data-eco]");
+  if (eco) {
+    const m = markets.find(x => x.id === eco.dataset.eco);
+    ecoId = m.id; $("ecoName").textContent = m.name;
+    $("ecoText").value = Object.entries(m.economySettings || {}).map(([k, x]) => `${k} ${x}`).join("\n");
+    ecoFound(); $("ecoEdit").hidden = false; $("ecoText").focus();
+    return;
+  }
   const t = ev.target.closest("[data-toggle]"), d = ev.target.closest("[data-del]"), rules = ev.target.closest("[data-rules]");
   if (rules) {
     const id = rules.dataset.rules, cell = rules.closest("td");

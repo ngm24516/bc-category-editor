@@ -137,6 +137,7 @@
   .row .col-w, .row .col-atm { @apply pr-3 text-right font-mono text-[12.5px] tabular-nums; }
   .row .col-now { @apply leading-tight; }
   .row .col-now small { @apply block truncate font-sans text-[11px]; color: var(--muted); }
+  .row .col-now .qty, .sr-table td.now .qty { @apply font-sans text-[11px]; color: var(--muted); }
   .thead .th.col-w, .thead .th.col-atm { @apply justify-end pr-3; }
   .row .col-price { @apply pr-3 text-right font-mono text-[12.5px] tabular-nums; }
   .thead .th { @apply relative flex h-full min-w-0 items-center pr-2; }
@@ -381,4 +382,29 @@
   .sr-table td.now { @apply leading-tight; }
   .sr-table td.now small { @apply block font-sans text-[11px]; color: var(--muted); }
   .sr-table .ic { @apply block; }
+}
+
+/* ---- item hover card (web/item-card.js) */
+@layer components {
+  .itemcard {
+    @apply pointer-events-none fixed z-50 w-72 rounded-lg border p-3 text-[13px] shadow-lg;
+    background: var(--panel); border-color: var(--line); color: var(--ink);
+  }
+  .itemcard[hidden] { @apply hidden; }
+  .itemcard .ic-head b { @apply block leading-snug; }
+  .itemcard .ic-head .mono { @apply block truncate text-[11px]; color: var(--muted); }
+  .itemcard .ic-sec { @apply mt-2 border-t pt-2; border-color: var(--line); }
+  .itemcard .ic-title { @apply mb-1 text-[11px] font-semibold tracking-wide uppercase; color: var(--muted); }
+  .itemcard .ic-row { @apply flex items-baseline justify-between gap-3; }
+  .itemcard .ic-row span { color: var(--muted); }
+  .itemcard .ic-row b { @apply text-right font-semibold tabular-nums; }
+  .itemcard .ic-row small { @apply font-normal; color: var(--muted); }
+  .itemcard .ic-note { @apply mb-1 text-[11.5px] leading-snug; color: var(--muted); }
+}
+
+@layer components {
+  .eco-edit { @apply mt-4 rounded-lg border p-4; border-color: var(--line); }
+  .eco-edit h3 { @apply mb-1 font-semibold; }
+  .eco-edit textarea { @apply mt-2 w-full; }
+  .eco-edit .acts { @apply mt-2 flex justify-end gap-2; }
 }

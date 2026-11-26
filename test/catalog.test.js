@@ -184,6 +184,13 @@ describe("mod search", () => {
     assert.deepEqual([raw.atmRaw, raw.atmDefaults],
       [{ "Base.GoldBar": [325, "precious_metals"], "Base.Pistol": [3000, "weapons_firearms", "weapons_firearms", 1] }, { SellValuePercent: 25 }],
       "the numbers behind each value, for the server's own settings");
+    await pool.query("UPDATE mod_versions SET atm_extra = atm_extra || $2 WHERE id = $1", [eco.versionId,
+      { shop: { "Base.Pistol": [3000, "weapons_firearms"], "Base.Axe": [2800, "weapons_melee"] },
+        blackMarket: { "NnC.CrystalMeth": ["Meth", "PriceMeth", "CrystalMeth"] } }]);
+    const more = await (await api(null, "POST", "/api/catalog/lookup", { fullTypes: [...fts, "NnC.CrystalMeth"] })).json();
+    assert.deepEqual([more.shop, more.blackMarket],
+      [{ "Base.Pistol": [3000, "weapons_firearms"] }, { "NnC.CrystalMeth": ["Meth", "PriceMeth", "CrystalMeth"] }],
+      "the store's price and what the Black Market buys, for the items asked about");
     assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: "SWMG" })).status, 400);
     assert.equal((await api(null, "POST", "/api/catalog/lookup", { fullTypes: fts, modIds: [3] })).status, 400);
   });

@@ -186,7 +186,14 @@ class EconomyTests(unittest.TestCase):
                 "return Catalog"]))
         write(os.path.join(media, "sandbox-options.txt"), "\n".join([
             "option ServerEconomy.SellValuePercent", "{", "    type = integer,", "    default = 25,", "}",
-            "option ServerEconomy.OneLifeCurrencySellValuePercent", "{", "    type = integer,", "    default = 50,", "}"]))
+            "option ServerEconomy.OneLifeCurrencySellValuePercent", "{", "    type = integer,", "    default = 50,", "}",
+            "option ServerEconomy.HubX", "{", "    type = integer,", "    default = 10615,", "}",
+            "option ServerEconomyContraband.EnableMeth", "{", "    type = boolean,", "    default = true,", "}",
+            "option ServerEconomyContraband.BandMinCrystalMeth", "{", "    type = integer,", "    default = 200,", "}"]))
+        write(os.path.join(shared, "HZContrabandShared.lua"), "\n".join([
+            'local function product(id, name, family, key, price, uses)', '    local p = {}', 'end',
+            'product("CrystalMeth", "Crystal meth bag", "Meth", "Meth", 300, 10)',
+            'product("LSD", "LSD", "Psychedelics", "LSD", 100, 5)']))
 
     def test_the_atm_buys_back_what_the_gun_shop_sells(self):
         from pzcatalog.economy import read_economy
@@ -212,7 +219,14 @@ class EconomyTests(unittest.TestCase):
             media = os.path.join(d, "media")
             self.write_economy(media, gom=False)
             e = read_economy([media])
-            self.assertEqual(e["defaults"], {"SellValuePercent": 25, "OneLifeCurrencySellValuePercent": 50})
+            self.assertEqual(e["defaults"], {"SellValuePercent": 25, "OneLifeCurrencySellValuePercent": 50,
+                                             "EnableMeth": 1, "BandMinCrystalMeth": 200}, "economy settings only")
+            self.assertEqual(e["shop"], {"Base.Axe": [2800, "weapons_melee"], "Base.Pistol": [3000, "weapons_firearms"],
+                                         "Base.HuntingRifle": [5005, "weapons_firearms"], "Base.Bullets9mm": [10, "ammunition"],
+                                         "Base.Bullets9mmBox": [200, "ammunition"], "Base.9mmClip": [500, "magazines"]},
+                             "everything the server store sells")
+            self.assertEqual(e["blackMarket"], {"NnC.CrystalMeth": ["Meth", "PriceMeth", "CrystalMeth"],
+                                                "NnC.LSD": ["Psychedelics", "PriceLSD", "LSD"]})
             self.assertEqual(e["raw"]["Base.Pistol"], [3000, "weapons_firearms", "weapons_firearms", 1])
             self.assertEqual(e["raw"]["Base.HuntingRifle"], [5005, "weapons_firearms", "weapons_firearms", 0.5])
             # OneLife's settings (from its console log): a silver bar (165, precious metals) sells for 115.
@@ -252,6 +266,8 @@ class EconomyTests(unittest.TestCase):
             self.assertEqual(atm["MarzGuns.RepairPack"], 200)
             self.assertEqual(atm["MarzGuns.Bipod_Deployed"], atm["MarzGuns.Bipod_Folded"], "deployed sells as folded")
             self.assertIn("MarzGuns.DEAGLE", v["condition"])
+            self.assertEqual(v["shop"]["MarzGuns.DEAGLE"], [11000, "weapons_firearms"])
+            self.assertNotIn("Base.Pistol", v["shop"], "Guns of Marz takes it out of the store")
             self.assertNotIn("MarzGuns.9x19_Box", v["condition"])
 
     def test_a_guns_of_marz_file_it_cannot_read_is_skipped(self):
