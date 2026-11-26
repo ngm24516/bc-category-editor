@@ -31,8 +31,10 @@
     try {
       const v = JSON.parse(localStorage.getItem(KEY) || "null");
       if (v && typeof v === "object") return clean(v);
-      const old = localStorage.getItem(OLD_KEY);   // the single "ATM sell %" from before
-      if (old !== null && Number(old) >= 0 && Number(old) <= 10000) return { SellValuePercent: Number(old) };
+      // The single "ATM sell %" from before was usually the mod's default (25) left as it was: carrying it over
+      // would hide the marketplace's server settings, so only a value someone changed is kept.
+      const old = localStorage.getItem(OLD_KEY);
+      if (old !== null && old !== "25" && Number(old) >= 0 && Number(old) <= 10000) return { SellValuePercent: Number(old) };
     } catch { /* storage unavailable */ }
     return {};
   }

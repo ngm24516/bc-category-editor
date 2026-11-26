@@ -66,3 +66,15 @@ test("the Black Market's estimate: middle of the band × payout percents, more a
   assert.equal(blackMarket(["Psychedelics", "PriceLSD", "LSD"], { EnablePsychedelics: 0 }, def), null, "family switched off");
   assert.equal(blackMarket(["Psychedelics", "PriceLSD", "LSD"], { EnableBlackMarketSales: 0 }, def), null);
 });
+
+test("the old single ATM sell % carries over only when someone changed it", () => {
+  const run = old => {
+    const store = new Map(old == null ? [] : [["bcedit.atmpct.v1", old]]);
+    const c = { window: {}, localStorage: { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) } };
+    vm.runInNewContext(readFileSync(new URL("../web/atm.js", import.meta.url), "utf8"), c);
+    return { ...c.window.ATMCalc.load() };
+  };
+  assert.deepEqual(run("25"), {}, "the mod's default: the marketplace's settings apply");
+  assert.deepEqual(run("70"), { SellValuePercent: 70 });
+  assert.deepEqual(run(null), {});
+});
