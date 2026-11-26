@@ -16,11 +16,10 @@ jobs:
           docker cp dl:/tmp/s/steamapps/workshop/content/108600/3728629828 out/mod
           cd "out/mod/mods/Server Economy/42/media"
           set +e
-          echo "=== contraband shared: price/value/blackmarket lines ==="; grep -nE -i 'price|value|payout|blackmarket|buyback|itemType|fullType' lua/shared/HZContrabandShared.lua | head -400
-          echo "=== contraband server: blackMarketView / sell ==="; grep -nE -i 'function [A-Za-z_.:]*(blackMarket|sell|price|payout)' lua/server/HZContrabandServer.lua
-          n=$(grep -n 'blackMarketView' lua/server/HZContrabandServer.lua | head -1 | cut -d: -f1); [ -n "$n" ] && sed -n "$n,$((n+120))p" lua/server/HZContrabandServer.lua
-          echo "=== getVendingPrice and buy ==="; grep -nA25 'function HZEconomyShared.getVendingPrice' lua/shared/HZEconomyShared.lua
-          grep -nE 'getVendingPrice|Stock|stock' lua/server/HZEconomyServer.lua | head -60
-          echo "=== Java bridge price functions ==="; grep -rnE 'ServerEconomyJava\.[A-Za-z]*([Pp]rice|[Vv]alue)|bridge\.[A-Za-z]*([Pp]rice|[Vv]alue)' lua | head -40
-          echo "=== sandbox EN text: price/stock/blackmarket ==="; grep -nE -i 'price|stock|black ?market|buyback|payout' lua/shared/Translate/EN/Sandbox_EN.txt | head -150
-          echo "=== sandbox: black market + contraband options ==="; grep -nA8 -E 'option ServerEconomy(BlackMarket|Contraband)[A-Za-z]*\.' sandbox-options.txt | grep -E 'option|default' | head -120
+          echo "=== getSandbox ==="; n=$(grep -n 'function HZEconomyShared.getSandbox' lua/shared/HZEconomyShared.lua | head -1 | cut -d: -f1); sed -n "$n,$((n+140))p" lua/shared/HZEconomyShared.lua
+          echo "=== product categories ==="; grep -nE '^\s{4}[a-z_]+ = \{' lua/shared/HZEconomyProducts.lua
+          echo "=== contraband products and percents ==="; sed -n 40,75p lua/shared/HZContrabandShared.lua; grep -nE 'function C\.(marketPercent|price|premium|quote|dmz)' -A8 lua/shared/HZContrabandShared.lua | head -80
+          echo "=== contraband server price ==="; sed -n 50,70p lua/server/HZContrabandServer.lua; sed -n 1150,1185p lua/server/HZContrabandServer.lua | cut -c1-400
+          echo "=== java ==="; find /tmp/s ../../.. -iname '*.jar' -o -iname '*.class' 2>/dev/null | head; grep -n 'contrabandPremiumPrice\|contrabandPrice\b' -r lua | head -5
+          echo "=== end ==="
+          exit 0
