@@ -80,6 +80,10 @@ Browser ──► Azure Container Apps (one container, one origin)
   server's Server Economy sandbox settings once (Admin › Marketplaces › Server settings) and everyone who picks it
   gets its prices. Settings a user pastes in the editor win over them.
 - **Now** shows how many are listed at the cheapest price, in parentheses.
+- **Undercut:** under Prices from, **You sell as** takes the owner name(s) on your listings (kept in your account,
+  `user_seller_names`, RLS). Items you list that someone else now lists cheaper get an orange outline (editor and
+  Stockroom), the hover card says by how much, and **My listings** / **Undercut** under Show filter to them
+  (`GET /api/markets/:id/sellers?names=`).
 - **Admin dashboard** (`/admin`, `web/admin.html` + `server/admin.js`): for the Discord ids in
   `ADMIN_DISCORD_IDS`. Shows the queue, when the importer and the hourly update check run next and last, every
   finished import with its worker log, and each importer run (`importer_runs`). Every mod whose latest import

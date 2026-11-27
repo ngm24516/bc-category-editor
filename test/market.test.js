@@ -125,6 +125,30 @@ describe("marketplaces", () => {
     assert.deepEqual([p["Base.Leek"][2], p["Base.Journal"][2], p["Base.IDCard"][0]], [1000, 99999, 99999], "rules off: everything counts");
   });
 
+  test("seller names: kept per account (RLS), and what those sellers list now, to spot being undercut", async () => {
+    assert.equal((await api(null, "PUT", "/api/markets/sellers", { names: ["Nate"] })).status, 401);
+    for (const bad of ["Nate", [1], Array(11).fill("x"), ["a,b"], ["x".repeat(61)]]) {
+      assert.equal((await api(alice, "PUT", "/api/markets/sellers", { names: bad })).status, 400, JSON.stringify(bad));
+    }
+    const saved = await (await api(alice, "PUT", "/api/markets/sellers", { names: [" Nate ", "nate", "Shopkeep"] })).json();
+    assert.deepEqual(saved.sellerNames, ["Nate", "Shopkeep"], "trimmed, no repeats");
+    assert.deepEqual((await (await api(alice, "GET", "/api/markets")).json()).sellerNames, ["Nate", "Shopkeep"]);
+    assert.deepEqual((await (await api(bob, "GET", "/api/markets")).json()).sellerNames, [], "another user can't see them");
+    assert.deepEqual((await (await api(null, "GET", "/api/markets")).json()).sellerNames, []);
+
+    const { body: m } = await addMarket();
+    await pool.query("UPDATE marketplaces SET last_crawl_at = '2026-11-25T00:00:00.123456Z' WHERE id = $1", [m.id]);
+    await pool.query(`INSERT INTO market_listings (marketplace_id, listing_id, price, full_type, quantity, owner_name, last_seen) VALUES
+      ($1, 'n1', 120, 'Base.Axe', 2, 'nate', '2026-11-25T00:00:00.123456Z'),
+      ($1, 'n2', 150, 'Base.Axe', 1, 'Nate', '2026-11-25T00:00:00.123456Z'),
+      ($1, 'n3', 99, 'Base.Saw', 1, 'Nate', '2026-11-20T00:00:00Z'),
+      ($1, 'z1', 100, 'Base.Axe', 1, 'Zed', '2026-11-25T00:00:00.123456Z')`, [m.id]);
+    const r = await (await api(null, "GET", `/api/markets/${m.id}/sellers?names=NATE`)).json();
+    assert.deepEqual(r.items, { "Base.Axe": [120, 2, "nate", null] }, "their cheapest now, any case; not old listings");
+    assert.equal((await api(null, "GET", `/api/markets/${m.id}/sellers`)).status, 400);
+    assert.equal((await api(null, "GET", `/api/markets/not-an-id/sellers?names=x`)).status, 404);
+  });
+
   test("average daily low: the cheapest listing on each day the item was listed, averaged", async () => {
     const { body: m } = await addMarket();
     const { rows: [mod] } = await pool.query("INSERT INTO mods (kind, name) VALUES ('base', 'Project Zomboid') RETURNING id");

@@ -408,3 +408,14 @@
   .eco-edit textarea { @apply mt-2 w-full; }
   .eco-edit .acts { @apply mt-2 flex justify-end gap-2; }
 }
+
+/* ---- your marketplace listings: someone else is cheaper (undercut) */
+@layer components {
+  .row.undercut { box-shadow: inset 0 0 0 2px var(--color-amber-500); background: color-mix(in srgb, var(--color-amber-500) 9%, transparent); }
+  .row.mine { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-amber-500) 45%, transparent); }
+  .row.undercut.sel { box-shadow: inset 0 0 0 2px var(--color-amber-500), inset 4px 0 0 var(--accent); }
+  #fStatus .undercut-btn svg { @apply mr-1 inline-block size-3.5 align-[-2px]; color: var(--color-amber-500); }
+  #fStatus .cnt { @apply text-[11px] tabular-nums; color: var(--muted); }
+  .sr-table tr.undercut td { background: color-mix(in srgb, var(--color-amber-500) 9%, transparent); }
+  .sr-table tr.undercut td:first-child { box-shadow: inset 3px 0 0 var(--color-amber-500); }
+}

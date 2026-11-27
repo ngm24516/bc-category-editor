@@ -68,12 +68,17 @@
         <button data-v="changed">Changed here</button>
         <button data-v="unknown">Not in these mods</button>
         <button data-v="blk">Blacklisted</button>
+        <button data-v="mine" class="mkt-mine" hidden title="Items you list on the marketplace">My listings <span class="cnt" id="cntMine"></span></button>
+        <button data-v="undercut" class="mkt-mine undercut-btn" hidden title="Items you list that someone else now lists cheaper"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v4M8 11.8v.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Undercut <span class="cnt" id="cntUndercut"></span></button>
       </div>
     </div>
     <div id="marketBox" hidden>
       <label for="marketSel">Prices from</label>
       <select id="marketSel"><option value="">No prices</option></select>
       <div class="help" id="marketInfo" style="margin-top:4px"></div>
+      <label for="sellerNames" style="margin-top:8px">You sell as</label>
+      <input type="text" id="sellerNames" placeholder="Your name on the marketplace" autocomplete="off" spellcheck="false">
+      <div class="help" style="margin-top:4px">The owner name on your listings (several: separate with commas). Items you list that someone else now sells cheaper get an orange outline; <b>Undercut</b> under Show lists them.</div>
     </div>
     <div id="atmBox" hidden>
       <label for="atmPct">ATM sell %</label>
@@ -391,6 +396,8 @@ function applyFilters() {
       case "changed": if (!itemChanged(it)) return false; break;
       case "unknown": if (!it.unknown) return false; break;
       case "blk": if (!isBlk(it)) return false; break;
+      case "mine": if (!MINE.has(it.ft)) return false; break;
+      case "undercut": if (!undercut(it.ft)) return false; break;
     }
     return true;
   });
@@ -454,6 +461,21 @@ function priceCells(ft) {
     '<div class="cell col-price" title="Average of the cheapest listing on each of ' + p[10] + ' day' + (p[10] === 1 ? "" : "s") + ' listed">' + money(p[9]) + '</div>' +
     '<div class="cell col-price col-lh" title="Lowest of ' + n + '">' + money(p[1]) + '</div>' +
     '<div class="cell col-price col-lh" title="Highest of ' + n + '">' + money(p[2]) + '</div>' + now;
+}
+// Your listings on the chosen marketplace (Market.loadMine): full type -> [your cheapest price, how many at it,
+// owner, shop]. Undercut: someone else's current cheapest is below yours.
+let MINE = new Map();
+const undercut = ft => { const m = MINE.get(ft), p = PRICES && PRICES.get(ft); return !!(m && p && p[4] != null && p[4] < m[0]); };
+function showMineFilters() {
+  const any = MINE.size > 0;
+  let n = 0; for (const ft of MINE.keys()) if (undercut(ft)) n++;
+  for (const b of document.querySelectorAll(".mkt-mine")) b.hidden = !any;
+  $("cntMine").textContent = any ? MINE.size.toLocaleString() : "";
+  $("cntUndercut").textContent = any ? n.toLocaleString() : "";
+  if (!any && (F.status === "mine" || F.status === "undercut")) {
+    F.status = "all";
+    for (const x of $("fStatus").children) x.classList.toggle("on", x.dataset.v === "all");
+  }
 }
 // Weight (always) and Server Economy's ATM sell price (when a mod in the setup has an ATM).
 // ATM: full type -> the numbers behind its ATM value (see importer/pzcatalog/economy.py); atm.js works out the
@@ -601,7 +623,9 @@ function renderRows(force) {
   for (let i = first; i < last; i++) {
     const it = filtered[i], ov = overrides.has(it.ft), blk = isBlk(it), cur = currentOf(it), sel = selected.has(it.ft);
     const tip = blk && ov ? "Blacklisted: Better Containers ignores your override for this item" : (ov ? "Your override (default: " + catName(defaultOf(it)) + ")" : "Default category");
-    h += '<div class="row' + (sel ? " sel" : "") + (it.ft === focusFt ? " focus" : "") + '" style="top:' + (i * ROWH) + 'px" data-i="' + i + '">' +
+    const uc = undercut(it.ft);
+    h += '<div class="row' + (sel ? " sel" : "") + (it.ft === focusFt ? " focus" : "") + (uc ? " undercut" : MINE.has(it.ft) ? " mine" : "") + '" style="top:' + (i * ROWH) + 'px" data-i="' + i + '"' +
+      (uc ? ' title="Someone else now lists this cheaper than you: ' + esc(money(PRICES.get(it.ft)[4])) + " vs your " + esc(money(MINE.get(it.ft)[0])) + '"' : "") + '>' +
       '<input type="checkbox" aria-label="Select ' + esc(it.name) + '"' + (sel ? " checked" : "") + '>' + iconHtml(it.icon, 32) +
       '<div class="nm"><div>' + esc(it.name) + (it.unknown ? ' <span class="chip warn">not on this PC</span>' : "") + '</div><div class="ft">' + esc(it.ft) + '</div></div>' +
       '<div class="cell col-w num">' + (it.weight == null ? '<span class="muted">–</span>' : fmtWeight(it.weight)) + '</div>' +
@@ -1598,8 +1622,34 @@ const Account = (() => {
 // Admins add marketplaces; each account picks the one whose prices show (saved to the account when signed in,
 // to this browser otherwise). Prices are the average, lowest and highest listing seen by the hourly market job.
 const Market = (() => {
-  const KEY = "bcedit.market.v1";
-  let markets = [], choice = null;
+  const KEY = "bcedit.market.v1", SELLERS_KEY = "bcedit.sellers.v1";
+  let markets = [], choice = null, sellers = [];
+  const parseNames = v => [...new Set(String(v).split(",").map(x => x.trim()).filter(Boolean))].slice(0, 10);
+
+  // What you list right now (by your seller names), to mark items someone else now sells cheaper.
+  async function loadMine() {
+    MINE = new Map();
+    if (choice && sellers.length) {
+      try {
+        const r = await fetch("/api/markets/" + encodeURIComponent(choice) + "/sellers?names=" + encodeURIComponent(sellers.join(",")), { credentials: "same-origin" });
+        if (r.ok) MINE = new Map(Object.entries((await r.json()).items));
+      } catch (e) { /* offline: nothing marked */ }
+    }
+    showMineFilters();
+  }
+  async function setSellers(v) {
+    const names = parseNames(v);
+    if (names.join(",") === sellers.join(",")) return;
+    sellers = names;
+    if (Account.signedIn()) {
+      const r = await fetch("/api/markets/sellers", { method: "PUT", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ names }) });
+      if (!r.ok) toast("Couldn't save your seller names. Try again.");
+    } else {
+      try { localStorage.setItem(SELLERS_KEY, JSON.stringify(names)); } catch (e) { /* storage unavailable */ }
+    }
+    await loadMine(); applyFilters();
+  }
 
   function info() {
     const m = markets.find(x => x.id === choice);
@@ -1617,6 +1667,7 @@ const Market = (() => {
         if (r.ok) PRICES = new Map(Object.entries((await r.json()).items));
       } catch (e) { /* offline: no prices */ }
     }
+    await loadMine();
     if (!PRICES && F.sort && ["avg", "avglow", "low", "high", "now"].includes(F.sort.key)) F.sort = null;
     document.body.classList.toggle("prices-on", !!PRICES);
     layoutCols(); renderSorters(); applyFilters(); info();
@@ -1645,6 +1696,10 @@ const Market = (() => {
     if (!markets.length) return;
     let local = null; try { local = localStorage.getItem(KEY); } catch (e) { /* storage unavailable */ }
     choice = Account.signedIn() ? data.choice : local;
+    if (Account.signedIn()) sellers = data.sellerNames || [];
+    else { try { const v = JSON.parse(localStorage.getItem(SELLERS_KEY) || "[]"); if (Array.isArray(v)) sellers = parseNames(v.join(",")); } catch (e) { /* storage unavailable */ } }
+    $("sellerNames").value = sellers.join(", ");
+    $("sellerNames").onchange = () => setSellers($("sellerNames").value);
     if (choice && !markets.some(m => m.id === choice)) choice = null;
     $("marketSel").innerHTML = '<option value="">No prices</option>' +
       markets.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join("");
@@ -1670,6 +1725,8 @@ function cardFacts(ft) {
   if (f.atm || f.store || f.blackMarket) f.settings = economySource();
   const p = PRICES && PRICES.get(ft);
   if (p) f.market = { name: Market.name(), avg: p[0], low: p[1], high: p[2], n: p[3], now: p[4], owner: p[5], shop: p[6], qty: p[8], avgLow: p[9], days: p[10] };
+  const m = MINE.get(ft);
+  if (m && f.market) f.market.mine = { price: m[0], qty: m[1], undercut: undercut(ft) };
   return f;
 }
 const itemCard = ItemCard.attach($("rows"), ".nm", el => {
