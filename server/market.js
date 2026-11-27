@@ -119,14 +119,17 @@ export function createMarketRouter({ pool, requireUser, config }) {
     const m = (await pool.query("SELECT id, last_snapshot_at FROM marketplaces WHERE id = $1 AND enabled", [req.params.id])).rows[0];
     if (!m) return bad(res, 404, "not_found", "No such marketplace");
     // Only items in the library: a listing counts when its full_type is exactly a catalog item's.
-    // History: every listing price recorded, minus overpriced ones (see OVERPRICED). Current: the cheapest such
+    // History: every listing price recorded, minus overpriced ones (see OVERPRICED). Avg low: the cheapest such
+    // listing on each day the item was listed (a listing counts on every UTC day from first to last seen), averaged
+    // over those days: what buying it cheaply typically costs, which the plain average of every listing (padded by
+    // slow-selling expensive ones) overstates. Current: the cheapest such
     // listing in the last full read (last_seen equals last_crawl_at), with who sells it.
     const { rows } = await pool.query(
       `WITH stats AS (
          SELECT full_type, percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS med, count(*) AS cnt
            FROM market_listings WHERE marketplace_id = $1 GROUP BY full_type),
        lst AS (
-         SELECT l.full_type, l.price, l.quantity, l.owner_name, l.shop_name, l.last_seen, ${OVERPRICED} AS ignored
+         SELECT l.full_type, l.price, l.quantity, l.owner_name, l.shop_name, l.first_seen, l.last_seen, ${OVERPRICED} AS ignored
            FROM market_listings l JOIN stats s USING (full_type) JOIN marketplaces mk ON mk.id = l.marketplace_id
           WHERE l.marketplace_id = $1 AND EXISTS (SELECT 1 FROM catalog_items c WHERE c.full_type = l.full_type)),
        hist AS (
@@ -134,6 +137,13 @@ export function createMarketRouter({ pool, requireUser, config }) {
                 min(price) FILTER (WHERE NOT ignored) AS low, max(price) FILTER (WHERE NOT ignored) AS high,
                 count(*) FILTER (WHERE NOT ignored) AS n, count(*) FILTER (WHERE ignored) AS skipped
            FROM lst GROUP BY full_type HAVING count(*) FILTER (WHERE NOT ignored) > 0),
+       daily AS (
+         SELECT full_type, d AS day, min(price) AS low
+           FROM lst, generate_series(date_trunc('day', first_seen AT TIME ZONE 'UTC'),
+                                     date_trunc('day', greatest(first_seen, last_seen) AT TIME ZONE 'UTC'),
+                                     interval '1 day') AS d
+          WHERE NOT ignored GROUP BY full_type, d),
+       dl AS (SELECT full_type, round(avg(low), 2) AS avg_low, count(*) AS days FROM daily GROUP BY full_type),
        cur AS (
          -- qty: how many are listed now at that price, in every listing at it (null when no listing says)
          SELECT DISTINCT ON (full_type) full_type, price, owner_name, shop_name,
@@ -142,16 +152,17 @@ export function createMarketRouter({ pool, requireUser, config }) {
           -- compared in SQL: the timestamps have microseconds, which a JavaScript Date would round away
           WHERE NOT ignored AND last_seen = (SELECT last_crawl_at FROM marketplaces WHERE id = $1)
           ORDER BY full_type, price, owner_name NULLS LAST)
-       SELECT h.*, c.price AS cur_price, c.owner_name, c.shop_name, c.qty AS cur_qty FROM hist h LEFT JOIN cur c USING (full_type)`,
+       SELECT h.*, c.price AS cur_price, c.owner_name, c.shop_name, c.qty AS cur_qty, dl.avg_low, dl.days
+         FROM hist h LEFT JOIN cur c USING (full_type) LEFT JOIN dl USING (full_type)`,
       [m.id]);
     res.set("Cache-Control", "public, max-age=300");
     res.json({
       marketplaceId: m.id, snapshotAt: m.last_snapshot_at,
       // [average, low, high, listings counted, current lowest (null if none now), its owner, its shop, overpriced ignored,
-      //  how many are listed now at the current lowest (null if unknown)]
+      //  how many are listed now at the current lowest (null if unknown), average daily low, days listed]
       items: Object.fromEntries(rows.map(r => [r.full_type, [Number(r.avg), Number(r.low), Number(r.high), Number(r.n),
         r.cur_price == null ? null : Number(r.cur_price), r.owner_name ?? null, r.shop_name ?? null, Number(r.skipped),
-        r.cur_qty == null ? null : Number(r.cur_qty)]])),
+        r.cur_qty == null ? null : Number(r.cur_qty), Number(r.avg_low), Number(r.days)]])),
     });
   });
 

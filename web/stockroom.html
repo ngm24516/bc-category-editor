@@ -126,7 +126,7 @@ function render() {
     const it = LOOK.items[ft], p = PRICES && PRICES.get(ft);
     // The ATM shows whole numbers, rounded down: per item, and for the whole stack.
     const u = atmUnit(ft);
-    return { ft, n, known: !!it, name: it ? it.name : ft, p, value: p ? p[0] * n : null,
+    return { ft, n, known: !!it, name: it ? it.name : ft, p, value: p ? (p[9] || p[0]) * n : null,   // valued at the average daily low
       atm: u == null ? null : Math.floor(u + 1e-9), atmTotal: u == null ? null : Math.floor(u * n + 1e-9) };
   });
   const hasAtm = rows.some(r => r.atm != null);
@@ -136,7 +136,7 @@ function render() {
   const total = k => priced.reduce((a, r) => a + r.p[k] * r.n, 0);
   const key = sort.key, dir = sort.dir;
   const val = r => key === "name" ? r.name.toLowerCase() : key === "n" ? r.n : key === "value" ? r.value : key === "atm" ? r.atm
-    : r.p ? r.p[{ avg: 0, low: 1, high: 2, now: 4 }[key]] ?? null : null;
+    : r.p ? r.p[{ avg: 0, low: 1, high: 2, now: 4, avglow: 9 }[key]] ?? null : null;
   const needle = q.trim().toLowerCase();
   const shown = rows.filter(r => !needle || r.name.toLowerCase().includes(needle) || r.ft.toLowerCase().includes(needle))
     .sort((a, b) => {
@@ -157,7 +157,7 @@ function render() {
     <section class="cards" aria-label="Totals">
       ${card("Item types", rows.length.toLocaleString())}
       ${card("Items", totalQty.toLocaleString())}
-      ${card("Market value", PRICES ? money(Math.round(total(0))) : "–", PRICES ? `at average prices · ${money(Math.round(total(1)))} low – ${money(Math.round(total(2)))} high` : "")}
+      ${card("Market value", PRICES ? money(Math.round(total(9))) : "–", PRICES ? `at average daily lows · ${money(Math.round(total(0)))} at average prices` : "")}
       ${card("Priced", PRICES ? `${priced.length.toLocaleString()} / ${rows.length.toLocaleString()}` : "–", PRICES && m ? `from ${esc(m.name)}` : "")}
       ${hasAtm ? card("ATM payout", money(Math.round(atmTotal)), `selling everything the ATM buys, at ${esc(atmPct())}%`) : ""}
     </section>
@@ -170,13 +170,13 @@ function render() {
         <button id="forget" title="Remove this character's inventory from your account">Forget this character</button>
       </h2>
       ${!PRICES ? `<p class="notice info show sr-note">${markets.length ? "Choose a marketplace under <b>Prices from</b> to see what each item is worth." : "No marketplace has been added yet, so there are no prices to show."}</p>` : ""}
-      <div class="sr-table"><table class="grid"><thead><tr><th></th>${th("name", "Item")}${th("n", "Qty", "num")}${hasAtm ? th("atm", "ATM", "num") : ""}${th("avg", "Avg", "num")}${th("low", "Low", "num")}${th("high", "High", "num")}${th("now", "Now", "num")}${th("value", "Value", "num")}</tr></thead><tbody>
+      <div class="sr-table"><table class="grid"><thead><tr><th></th>${th("name", "Item")}${th("n", "Qty", "num")}${hasAtm ? th("atm", "ATM", "num") : ""}${th("avg", "Avg", "num")}${th("avglow", "Avg low", "num")}${th("low", "Low", "num")}${th("high", "High", "num")}${th("now", "Now", "num")}${th("value", "Value", "num")}</tr></thead><tbody>
       ${shown.slice(0, LIMIT).map(r => `<tr><td>${icon(r.ft)}</td>
         <td class="sr-item" data-ft="${esc(r.ft)}"><span class="nm1">${esc(r.name)}</span><span class="sub mono">${esc(r.ft)}${r.known ? "" : " · not in the catalog"}</span></td>
         <td class="num">${r.n.toLocaleString()}</td>
         ${hasAtm ? (r.atm == null ? '<td class="num muted">–</td>' : `<td class="num" title="Value ${money(ATMCalc.value(atmRaw(r.ft), ATM_SET, LOOK.def))} × ${esc(atmPct())}% · ${money(r.atmTotal)} for all ${r.n.toLocaleString()}${LOOK.cond.has(r.ft) ? " at full condition; worn ones pay less (down to 25%)" : ""}">${money(r.atm)}</td>`) : ""}
-        ${r.p ? `<td class="num" title="Average of ${r.p[3]} listing${r.p[3] === 1 ? "" : "s"}">${money(r.p[0])}</td><td class="num">${money(r.p[1])}</td><td class="num">${money(r.p[2])}</td>${nowCell(r.p)}<td class="num"><b>${money(Math.round(r.value))}</b></td>`
-          : `<td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td>`}</tr>`).join("")}
+        ${r.p ? `<td class="num" title="Average of ${r.p[3]} listing${r.p[3] === 1 ? "" : "s"}">${money(r.p[0])}</td><td class="num" title="Average of the cheapest listing on each of ${r.p[10]} day${r.p[10] === 1 ? "" : "s"} listed">${money(r.p[9])}</td><td class="num">${money(r.p[1])}</td><td class="num">${money(r.p[2])}</td>${nowCell(r.p)}<td class="num"><b>${money(Math.round(r.value))}</b></td>`
+          : `<td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td><td class="num muted">–</td>`}</tr>`).join("")}
       </tbody></table></div>
       ${shown.length > LIMIT ? `<p class="empty muted">Showing ${LIMIT.toLocaleString()} of ${shown.length.toLocaleString()} item types. Search to narrow it down.</p>` : ""}
       ${!shown.length ? `<p class="empty muted">Nothing matches that search.</p>` : ""}
@@ -206,7 +206,7 @@ function cardFacts(ft) {
       : mine > 1 ? "Using the server settings you pasted in the editor." : "Using the mod's default settings.";
   }
   const p = PRICES && PRICES.get(ft);
-  if (p) f.market = { name: (markets.find(x => x.id === choice) || {}).name, avg: p[0], low: p[1], high: p[2], n: p[3], now: p[4], owner: p[5], shop: p[6], qty: p[8] };
+  if (p) f.market = { name: (markets.find(x => x.id === choice) || {}).name, avg: p[0], low: p[1], high: p[2], n: p[3], now: p[4], owner: p[5], shop: p[6], qty: p[8], avgLow: p[9], days: p[10] };
   return f;
 }
 ItemCard.attach(document.body, ".sr-item", el => cardFacts(el.dataset.ft));

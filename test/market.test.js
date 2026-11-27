@@ -125,6 +125,23 @@ describe("marketplaces", () => {
     assert.deepEqual([p["Base.Leek"][2], p["Base.Journal"][2], p["Base.IDCard"][0]], [1000, 99999, 99999], "rules off: everything counts");
   });
 
+  test("average daily low: the cheapest listing on each day the item was listed, averaged", async () => {
+    const { body: m } = await addMarket();
+    const { rows: [mod] } = await pool.query("INSERT INTO mods (kind, name) VALUES ('base', 'Project Zomboid') RETURNING id");
+    const { rows: [v] } = await pool.query(
+      `INSERT INTO mod_versions (mod_id, label, game_version, icons) VALUES ($1, 'b', '42', '{}') RETURNING id`, [mod.id]);
+    await pool.query("INSERT INTO catalog_items (version_id, full_type, name) VALUES ($1, 'Base.Axe', 'Axe')", [v.id]);
+    // Day 1: 100 and 300 listed; day 2: only 300; day 3: 300 and 120; days 4-5: 120. Lows 100, 300, 120, 120, 120.
+    await pool.query(`INSERT INTO market_listings (marketplace_id, listing_id, price, full_type, first_seen, last_seen) VALUES
+      ($1, 'a', 100, 'Base.Axe', '2026-11-01T10:00Z', '2026-11-01T22:00Z'),
+      ($1, 'b', 300, 'Base.Axe', '2026-11-01T09:00Z', '2026-11-03T09:00Z'),
+      ($1, 'c', 120, 'Base.Axe', '2026-11-03T12:00Z', '2026-11-05T12:00Z')`, [m.id]);
+    const p = await (await api(null, "GET", `/api/markets/${m.id}/prices`)).json();
+    const [avg, low, high, n, , , , , , avgLow, days] = p.items["Base.Axe"];
+    assert.deepEqual([avg, low, high, n], [173.33, 100, 300, 3], "the plain average leans on the slow-selling 300");
+    assert.deepEqual([avgLow, days], [152, 5], "(100 + 300 + 120 + 120 + 120) / 5");
+  });
+
   test("an admin keeps the game server's economy settings with its marketplace; everyone gets them", async () => {
     const { body: m } = await addMarket();
     const set = { SellValuePercent: 200, PreciousMetalsSellValuePercent: 35, BandMinCrystalMeth: 350, EnableMeth: 1 };
@@ -150,7 +167,7 @@ describe("marketplaces", () => {
       ($1, 'l1', 100, 'Base.Axe'), ($1, 'l1', 130, 'Base.Axe'), ($1, 'l2', 40, 'Base.Axe'),
       ($1, 'l3', 15, 'Base.Hammer'), ($1, 'l4', 999, 'Base.NotInTheLibrary')`, [m.id]);
     let p = await (await api(null, "GET", `/api/markets/${m.id}/prices`)).json();
-    assert.deepEqual(p.items, { "Base.Axe": [90, 40, 130, 3, null, null, null, 0, null], "Base.Hammer": [15, 15, 15, 1, null, null, null, 0, null] },
+    assert.deepEqual(p.items, { "Base.Axe": [90, 40, 130, 3, null, null, null, 0, null, 40, 1], "Base.Hammer": [15, 15, 15, 1, null, null, null, 0, null, 15, 1] },
       "no full read yet: no current price");
     // A full read at time T: l1 (130, Bob) and l2 is gone; l5 (110, Alice) is new. Current lowest = 110 by Alice.
     await pool.query("UPDATE marketplaces SET last_crawl_at = '2026-11-25T00:00:00.123456Z' WHERE id = $1", [m.id]);
@@ -160,8 +177,8 @@ describe("marketplaces", () => {
                       VALUES ($1, 'l5', 110, 'Base.Axe', 3, 'Alice', 'Alice''s', '2026-11-25T00:00:00.123456Z'),
                              ($1, 'l6', 110, 'Base.Axe', 2, 'Zed', 'Zed''s', '2026-11-25T00:00:00.123456Z')`, [m.id]);
     p = await (await api(null, "GET", `/api/markets/${m.id}/prices`)).json();
-    assert.deepEqual(p.items["Base.Axe"], [98, 40, 130, 5, 110, "Alice", "Alice's", 0, 5], "5 listed now at 110, in two listings");
-    assert.deepEqual(p.items["Base.Hammer"].slice(4), [null, null, null, 0, null], "not listed now");
+    assert.deepEqual(p.items["Base.Axe"], [98, 40, 130, 5, 110, "Alice", "Alice's", 0, 5, 40, 1], "5 listed now at 110, in two listings");
+    assert.deepEqual(p.items["Base.Hammer"].slice(4, 9), [null, null, null, 0, null], "not listed now");
     await api(admin, "PATCH", `/api/admin/markets/${m.id}`, { enabled: false });
     assert.equal((await api(null, "GET", `/api/markets/${m.id}/prices`)).status, 404, "a disabled marketplace isn't served");
     const list = await (await api(admin, "GET", "/api/admin/markets")).json();
