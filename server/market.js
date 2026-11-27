@@ -1,9 +1,11 @@
 // Marketplaces: in-game shops whose listings the market job records every hour (importer/market.py).
 // Admins add them; every account picks the one whose prices the editor shows.
 //
-//   GET    /api/markets                   enabled marketplaces, and the signed-in user's choice
+//   GET    /api/markets                   enabled marketplaces, and the signed-in user's choice and seller names
 //   PUT    /api/markets/choice            { marketplaceId | null }   (signed in; user data, RLS)
 //   GET    /api/markets/:id/prices        { items: { fullType: [avg, low, high, listings, nowLow, owner, shop] } }
+//   PUT    /api/markets/sellers           { names: [...] }   the names the user sells under (signed in; RLS)
+//   GET    /api/markets/:id/sellers?names=a,b   those sellers' cheapest current listing of each item
 //   GET    /api/admin/markets             every marketplace with its address, status and counts (admins)
 //   POST   /api/admin/markets             { name, url } checks the address answers like a marketplace, then adds it
 //   PATCH  /api/admin/markets/:id         { enabled, ignoreAt, outlierFactor, economySettings }
@@ -31,6 +33,19 @@ export function cleanEconomySettings(v) {
     if (k.length > 80 || !SETTING.test(k) || typeof x !== "number" || !Number.isFinite(x) || x < 0 || x > 1e7) return undefined;
   }
   return entries.length ? Object.fromEntries(entries) : null;
+}
+
+// Seller names: trimmed, distinct (case-insensitively), at most 10 of up to 60 characters; null when invalid.
+function cleanNames(v) {
+  if (!Array.isArray(v) || v.length > 10) return null;
+  const out = [];
+  for (const x of v) {
+    if (typeof x !== "string") return null;
+    const n = x.trim();
+    if (n.length > 60 || n.includes(",") || [...n].some(ch => ch.charCodeAt(0) < 32)) return null;
+    if (n && !out.some(o => o.toLowerCase() === n.toLowerCase())) out.push(n);
+  }
+  return out;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -87,12 +102,42 @@ export function createMarketRouter({ pool, requireUser, config }) {
   // ---- everyone
   router.get("/markets", async (req, res) => {
     const { rows } = await pool.query(`${MARKETS_SQL} WHERE m.enabled ORDER BY m.name`);
-    let choice = null;
+    let choice = null, sellerNames = [];
     if (req.user) {
-      choice = await withUser(pool, req.user.id, async db =>
-        (await db.query("SELECT marketplace_id FROM user_marketplaces")).rows[0]?.marketplace_id ?? null);
+      [choice, sellerNames] = await withUser(pool, req.user.id, async db => [
+        (await db.query("SELECT marketplace_id FROM user_marketplaces")).rows[0]?.marketplace_id ?? null,
+        (await db.query("SELECT names FROM user_seller_names")).rows[0]?.names ?? []]);
     }
-    res.json({ markets: rows.map(r => marketJson(r, false)), choice });
+    res.json({ markets: rows.map(r => marketJson(r, false)), choice, sellerNames });
+  });
+
+  // The names this account sells under (listings' owner names), kept across computers.
+  router.put("/markets/sellers", requireUser, async (req, res) => {
+    const names = cleanNames(req.body?.names);
+    if (!names) return bad(res, 400, "invalid", "names must be a list of up to 10 seller names (each up to 60 characters)");
+    await withUser(pool, req.user.id, db => db.query(
+      `INSERT INTO user_seller_names (user_id, names) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET names = EXCLUDED.names, updated_at = now()`, [req.user.id, names]));
+    res.json({ sellerNames: names });
+  });
+
+  // What these sellers list right now (the last full read): their cheapest listing of each item, with how many they
+  // list at it. Public like the prices; the editor marks items someone else now lists cheaper.
+  router.get("/markets/:id/sellers", async (req, res) => {
+    if (!UUID.test(req.params.id)) return bad(res, 404, "not_found", "No such marketplace");
+    const names = cleanNames(typeof req.query.names === "string" ? req.query.names.split(",") : null);
+    if (!names || !names.length) return bad(res, 400, "invalid", "Give up to 10 seller names: ?names=Alice,Bob");
+    const { rows } = await pool.query(
+      `SELECT DISTINCT ON (l.full_type) l.full_type, l.price, l.owner_name, l.shop_name,
+              sum(l.quantity) OVER (PARTITION BY l.full_type, l.price) AS qty
+         FROM market_listings l JOIN marketplaces m ON m.id = l.marketplace_id AND m.enabled
+        WHERE l.marketplace_id = $1 AND l.last_seen = m.last_crawl_at
+          AND lower(l.owner_name) = ANY (SELECT lower(x) FROM unnest($2::text[]) x)
+        ORDER BY l.full_type, l.price`, [req.params.id, names]);
+    res.set("Cache-Control", "private, max-age=60");
+    // { fullType: [their cheapest price, how many at it (null if unknown), its owner, its shop] }
+    res.json({ items: Object.fromEntries(rows.map(r => [r.full_type,
+      [Number(r.price), r.qty == null ? null : Number(r.qty), r.owner_name, r.shop_name ?? null]])) });
   });
 
   router.put("/markets/choice", requireUser, async (req, res) => {
